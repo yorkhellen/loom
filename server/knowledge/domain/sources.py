@@ -128,6 +128,10 @@ class KnowledgeSource:
     # Who the documents are shown to: NAMESPACE_ACCESS or MIRRORED_ACCESS; a later build
     # may write another value, which `served` refuses.
     access: str = NAMESPACE_ACCESS
+    credential_mode: str = "shared"
+    # Connected authority is explicit; created_by remains audit attribution only.
+    owner_subject: str = ""
+    connection_id: str = ""
     created_by: str = ""
     active: bool = True
     # On an inactive row: an admin asked for the source's documents to be retired.
@@ -566,13 +570,16 @@ def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
 def served(src: KnowledgeSource) -> bool:
     """Whether this build serves `src`: one shown to every reader of its namespace. A
     mirrored one, or any `access` a later build writes, is that build's."""
-    return src.access == NAMESPACE_ACCESS
+    return src.credential_mode == "shared" and src.access == NAMESPACE_ACCESS
 
 
 def mirror_synced(src: KnowledgeSource) -> bool:
     """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
-    folder-store source. Its ops still refuse one (`served`)."""
-    return src.access == MIRRORED_ACCESS and src.kind == "gdrive"
+    folder-store source or a person's connected page/project source."""
+    return src.access == MIRRORED_ACCESS and (
+        src.kind == "gdrive"
+        or (src.credential_mode == "connected" and src.kind in {"notion", "linear"})
+    )
 
 
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:

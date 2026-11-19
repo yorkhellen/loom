@@ -57,8 +57,9 @@ code op is callable by name or through `loom_op`:
 `loom_op {"op": "code.index_status", "arguments": {"namespace": "code-myrepo"}}`. These
 are served over HTTP and the SDKs only: `code.outcome`, `code.refresh`, `code.reindex`,
 `code.calibrate`, `code.context_packs`, `code.coverage.watch`, `code.coverage.unwatch`,
-`code.scip_ingest`, `code.scip_status`. An op's MCP tool name is `loom_` plus its name
-with dots as underscores. Toolsets: [MCP reference](../../reference/mcp.md#toolsets).
+`code.scip_ingest`, `code.scip_status`; `LOOM_MCP_CODE_UPLOAD_TOOLS=true` serves the last
+two over MCP as well. An op's MCP tool name is `loom_` plus its name with dots as
+underscores. Toolsets: [MCP reference](../../reference/mcp.md#toolsets).
 
 **CLI.** There is no client CLI for the read ops. `loom code …` (`init`, `backfill`,
 `reconcile`, `compact`, `reembed`, `backfill-prs`, `scip-full`, `scip-delta`, `warm`,

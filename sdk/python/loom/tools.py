@@ -10,10 +10,11 @@ string the model reads::
     # … the model returns a tool call {name, arguments} …
     result = await tools.execute(call.name, call.arguments)
 
+An explicit ``code_namespace`` also offers one read-only code lookup tool.
 The parameter schemas are hand-written subsets of the generated op inputs:
 what a model should decide (key, value, query), not what the SDK stamps
 (identity) or the operator tunes (budgets, modes). The TypeScript SDK
-carries the same six with the same schemas.
+carries the same tools with the same schemas.
 """
 
 # ruff: noqa: E501  (tool descriptions are prose the model reads)
@@ -24,6 +25,7 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
+from loom.code_tools import CODE_TOOL_SPEC, code_request, fit_code_result
 from loom.errors import LoomError
 from loom.run import credit_answer
 
@@ -32,12 +34,56 @@ if TYPE_CHECKING:
 
 ToolFormat = Literal["anthropic", "openai", "generic"]
 
+_MEMORY_INSUFFICIENT = json.dumps(
+    {"insufficient": True, "metadata_omitted": True, "reason": "max_result_chars"},
+    separators=(",", ":"),
+)
+_RECALL_FIELDS = (
+    "abstain",
+    "abstain_code",
+    "abstain_reason",
+    "pending_extraction",
+    "degraded",
+    "retrieval_confidence",
+    "retrieval_risk",
+    "term_leg",
+    "fallback_budget_exhausted",
+    "namespaces_searched",
+    "namespaces_skipped",
+    "next_page",
+    "next",
+    "bodies_elided",
+)
+_RECALL_HIT_FIELDS = (
+    "namespace",
+    "memory_type",
+    "version",
+    "status",
+    "code_state",
+    "source_class",
+    "source_resource_id",
+    "verified",
+    "valid_at",
+    "created_at",
+    "below_threshold",
+    "governed",
+    "superseded_by",
+    "superseded_at",
+    "resolved_from",
+    "body_truncated",
+    "next",
+    "source",
+    "parent_memory_key",
+    "derived_from",
+)
+
 LOOM_TOOL_SPECS: tuple[dict[str, Any], ...] = (
     {
         "name": "loom_remember",
         "description": (
             "Store one fact about the user or the task under a stable key so it can be "
-            "recalled in later sessions. Use a short snake_case key; the same key updates the fact."
+            "recalled in later sessions. Use a stable scoped key; the same key updates the fact. "
+            "Read the receipt: noop or merged_into_key means no new row; conflicts need resolution."
         ),
         "parameters": {
             "type": "object",
@@ -65,7 +111,9 @@ LOOM_TOOL_SPECS: tuple[dict[str, Any], ...] = (
         "description": (
             "Search stored memories by meaning. Returns the closest facts with a similarity score; "
             "call before answering anything the user may have told you earlier. A result too long "
-            "to return leaves out its lowest-ranked memories and counts them in omitted."
+            "to return leaves out its lowest-ranked memories and counts them in omitted. "
+            "Respect abstention, below_threshold, code_state and provenance; verified requires attestation. "
+            "retrieval_risk and retrieval_confidence apply only to non-governed hits."
         ),
         "parameters": {
             "type": "object",
@@ -171,7 +219,8 @@ def tool_definitions(
 ) -> list[dict[str, Any]]:
     """Tool definitions in a provider's shape."""
     keep = set(only) if only is not None else None
-    specs = [s for s in LOOM_TOOL_SPECS if keep is None or s["name"] in keep]
+    available = (CODE_TOOL_SPEC, *LOOM_TOOL_SPECS) if keep is not None else LOOM_TOOL_SPECS
+    specs = [s for s in available if keep is None or s["name"] in keep]
     if fmt == "anthropic":
         return [
             {"name": s["name"], "description": s["description"], "input_schema": s["parameters"]}
@@ -205,6 +254,7 @@ class AgentTools:
         run_id: str | None = None,
         only: Iterable[str] | None = None,
         max_result_chars: int = 8_000,
+        code_namespace: str | None = None,
     ) -> None:
         self.agent = agent
         self.scope: dict[str, str | None] = {
@@ -213,7 +263,20 @@ class AgentTools:
             "run_id": run_id,
         }
         keep = set(only) if only is not None else None
-        self.names: tuple[str, ...] = tuple(n for n in TOOL_NAMES if keep is None or n in keep)
+        if keep and "loom_code_lookup" in keep and code_namespace is None:
+            raise LoomError("loom_code_lookup requires code_namespace")
+        if code_namespace is not None:
+            if not isinstance(code_namespace, str) or not code_namespace.strip():
+                raise LoomError("code_namespace must be a non-empty string")
+            if (
+                isinstance(max_result_chars, bool)
+                or not isinstance(max_result_chars, int)
+                or max_result_chars < 256
+            ):
+                raise LoomError("code tools require max_result_chars of at least 256")
+        self.code_namespace = code_namespace.strip() if code_namespace is not None else None
+        available = ("loom_code_lookup", *TOOL_NAMES) if self.code_namespace else TOOL_NAMES
+        self.names: tuple[str, ...] = tuple(n for n in available if keep is None or n in keep)
         self.max_result_chars = max_result_chars
 
     def definitions(self, fmt: ToolFormat = "generic") -> list[dict[str, Any]]:
@@ -226,29 +289,54 @@ class AgentTools:
         """Run one tool call; the result is the string to hand back to the model."""
         if not self.has(name):
             raise LoomError(f"unknown tool {name}; this agent offers {', '.join(self.names)}")
+        if name in ("loom_remember", "loom_recall") and self.max_result_chars < len(
+            _MEMORY_INSUFFICIENT
+        ):
+            raise LoomError("max_result_chars is too small to report memory result omissions")
         a = _parse_args(args)
+        if name == "loom_code_lookup":
+            if "depth" in a:
+                if a["depth"] in (None, ""):
+                    del a["depth"]
+                else:
+                    a["depth"] = _int(a, "depth")
+            op, body = code_request(a)
+            response = await self.agent.call_with_meta(
+                op,
+                {**body, "namespace": self.code_namespace},
+                user_id=self.scope["user_id"],
+                session_id=self.scope["session_id"],
+                run_id=self.scope["run_id"],
+            )
+            return fit_code_result(
+                {
+                    "op": op,
+                    "request_id": response.request_id,
+                    "scope": {"org": self.agent.org, "namespace": self.code_namespace},
+                    "data": response.data,
+                },
+                self.max_result_chars,
+            )
         out = await self._run(name, a)
+        if name in ("loom_remember", "loom_recall"):
+            return self._fit_memory_result(out)
         text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str)
-        memories = out.get("memories") if isinstance(out, dict) else None
-        if memories and len(memories) > 1 and len(text) > self.max_result_chars:
-            text = self._fit_memories(out, memories)
         if len(text) > self.max_result_chars:
             return text[: self.max_result_chars] + "…[truncated]"
         return text
 
-    def _fit_memories(self, out: dict[str, Any], memories: list[Any]) -> str:
-        """Recalled memories over the cap: keep the best ranked whole, so the JSON stays valid."""
-        dump = functools.partial(json.dumps, ensure_ascii=False, default=str)
-        used = len(dump({**out, "memories": [], "omitted": len(memories)}))
-        keep = 0
-        for memory in memories:
-            used += len(dump(memory)) + (2 if keep else 0)  # ", " between items
-            if keep and used > self.max_result_chars:
-                break
-            keep += 1
-        out["omitted"] = len(memories) - keep
-        del memories[keep:]
-        return dump(out)
+    def _fit_memory_result(self, out: dict[str, Any]) -> str:
+        """Keep whole evidence and disclose when even the metadata cannot fit."""
+        dump = functools.partial(json.dumps, ensure_ascii=False, default=str, separators=(",", ":"))
+        text = dump(out)
+        memories = out.get("memories")
+        if isinstance(memories, list) and len(text) > self.max_result_chars:
+            out["omitted"] = 0
+            while memories and len(text) > self.max_result_chars:
+                memories.pop()
+                out["omitted"] += 1
+                text = dump(out)
+        return text if len(text) <= self.max_result_chars else _MEMORY_INSUFFICIENT
 
     async def _call(self, op: str, body: Mapping[str, Any]) -> dict[str, Any]:
         return await self.agent.call(
@@ -267,10 +355,15 @@ class AgentTools:
                 body["memory_type"] = str(a["memory_type"])
             r = await call("memory.set", body)
             return {
-                "stored": True,
-                "memory_key": body["memory_key"],
-                "version": r.get("version"),
-                "verdict": r.get("conflict_verdict"),
+                **r,
+                "stored": bool(
+                    r.get("memory_id")
+                    and r.get("version")
+                    and not r.get("noop")
+                    and not r.get("dry_run")
+                ),
+                "memory_key": r.get("memory_key") or body["memory_key"],
+                "verdict": r.get("conflict_verdict") or "",
             }
         if name == "loom_recall":
             # Unpinned, a large top_k serves excerpts (above 15 by default)
@@ -280,14 +373,16 @@ class AgentTools:
                 body["top_k"] = _bounded("loom_recall", a, "top_k")
             r = await call("memory.search", body)
             return {
+                **{k: r[k] for k in _RECALL_FIELDS if k in r},
                 "memories": [
                     {
+                        **{k: h[k] for k in _RECALL_HIT_FIELDS if k in h},
                         "memory_key": h.get("memory_key"),
                         "content": h.get("content_excerpt"),
                         "similarity": round(float(h.get("similarity") or 0.0), 3),
                     }
                     for h in (r.get("results") or [])
-                ]
+                ],
             }
         if name == "loom_ask":
             r = await call("memory.ask", {"query": _str(a, "query")})

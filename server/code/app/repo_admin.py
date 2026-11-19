@@ -59,14 +59,49 @@ def _require_self_service() -> None:
         )
 
 
+def _require_platform_admin() -> None:
+    """With LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY, only a platform admin starts
+    a remote job or adds an index. The role counts on a flat token used by its own
+    subject: a scoped token's authority is its namespaces, and a trusted caller's
+    role is not the subject's it acts for. A call without a principal passes only
+    where auth is off: no transport then asks for a token, so there is no caller
+    to refuse. Where auth is on such a call is no platform admin's (an MCP endpoint
+    in `open` mode takes one that sends no bearer) and is refused."""
+    if not settings.code_self_service_platform_admin_only:
+        return
+    from server.auth.context import current_auth
+    from server.operations.base import Role
+
+    auth = current_auth()
+    if auth is None and not settings.auth_actually_required():
+        return
+    if (
+        auth is None
+        or auth.has_ns_roles()
+        or auth.impersonated_by
+        or not auth.has_role(Role.PLATFORM_ADMIN)
+    ):
+        raise AuthInsufficientError(
+            "only platform admins add repositories or branches on this deployment "
+            "(LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY), with a token of their own that "
+            "is not scoped to namespaces; ask the operator"
+        )
+
+
 async def _require_sandbox() -> None:
     """A repository someone adds from the page gets compiler tiers that run its
     own build code, and its clone talks to a host they chose: both need the
     repository-job sandbox (code/app/index/sandbox.py), so without it the add
-    is refused. The first call probes (runs bwrap), so off the event loop."""
+    is refused. LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED admits it instead: the
+    entry's git jobs then run as plain processes and it gets no compiler tier
+    (`compiler_tier.unsandboxed_skip`). The first call probes (runs bwrap), so
+    off the event loop, with the setting on too: the remote job that follows
+    asks the same probe on the loop."""
     from server.code.app.index.sandbox import sandbox_available
 
     if not await asyncio.to_thread(sandbox_available):
+        if settings.code_self_service_git_unsandboxed:
+            return
         message = (
             "adding repositories or branches from the page needs the repository-job "
             "sandbox, which this deployment cannot run (`loom doctor` says why); ask the "
@@ -205,6 +240,7 @@ async def handle_code_repo_remote_branches(input: Any) -> Any:
     can offer the choice instead of one text field."""
     require_code_intel()
     _require_self_service()
+    _require_platform_admin()
     await _require_sandbox()
     _require_same_org(input.org)
     try:
@@ -356,6 +392,7 @@ async def _add_extra_branches(
 async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
     require_code_intel()
     _require_self_service()
+    _require_platform_admin()
     await _require_sandbox()
     _require_same_org(input.org)
     try:
@@ -524,6 +561,7 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
 async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepoAddOutput:
     require_code_intel()
     _require_self_service()
+    _require_platform_admin()
     await _require_sandbox()
     _require_same_org(input.org)
     from server.code.domain.index.repos import repo_for_namespace

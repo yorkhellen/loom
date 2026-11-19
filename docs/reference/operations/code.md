@@ -298,7 +298,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 | `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
-| `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits" \| "virtual_by_name"}. |
+| `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
 | `note` | `str` | Plain-text notes on how the walk ran: dispatch or member folding, the ambiguity refusal, declined call sites, stale compiler-tier files; "" when none apply. |
 | `truncated` | `bool` | True when the walk stopped short: `max_nodes` held or a hop's edge read hit its cap. |
 | `counts_floor` | `bool` | Epistemic contract: edge counts are FLOORS, never totals. |
@@ -352,7 +352,7 @@ Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved
 | `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
-| `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits" \| "virtual_by_name"}. |
+| `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
 | `note` | `str` | Plain-text notes on how the walk ran: dispatch or member folding, the ambiguity refusal, declined call sites, stale compiler-tier files; "" when none apply. |
 | `truncated` | `bool` | True when the walk stopped short: `max_nodes` held or a hop's edge read hit its cap. |
 | `counts_floor` | `bool` | Epistemic contract: edge counts are FLOORS, never totals. |
@@ -568,7 +568,7 @@ Is this already tested?
 | `search_terms` | `dict[str, str]` | The literals the grep ran, each with the tier a hit counts as — the SQL names the class registers and the qualified form are `exact_scoped`, the bare method name `short_name_grep`. |
 | `resolved_by` | `str` | `registration` when the subject was a SQL-level name bound to its implementing class through the registration statement; '' and off the wire otherwise. |
 | `control` | `dict[str, Any]` | {symbol, ok[, via]}: the positive control this call ran; ok=False ⇒ unknown. |
-| `measured` | `dict[str, Any]` | What the newest imported coverage run measured, {} when no run covered the subject's files: {measured, executed, paths, hits: {path: [[start, end], ...]}, commit}. |
+| `measured` | `dict[str, Any]` | Imported execution evidence, {} when none exists: measured, executed, paths, hits, commit (empty for mixed commits), commits, index_commit, run_current, files (per-path commit, indexed_commit, symbol_commits, freshness), freshness… |
 | `trace_run_id` | `str` | Id of this call's row in `loom.code_search_trace`. |
 
 ## `code.enclosing`

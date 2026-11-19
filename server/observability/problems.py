@@ -775,7 +775,9 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     """Repository jobs run without the sandbox: an operator's repositories still
     get their build-based tiers, which execute the repository's code on this
     host; self-registered ones get none, are not fetched over the network, and
-    adding one is refused."""
+    adding one is refused. LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lifts the last
+    two, and the warning stays: their git jobs then reach the remote with
+    nothing vetting its address."""
     if not settings.code_ingest_enabled:
         return []
     problems = _layout_problems(state)
@@ -795,6 +797,17 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
                 source="runtime",
             ),
         ]
+    self_registered = (
+        "self-registered repositories get no build tier, those with a network remote are "
+        "not cloned or fetched, and adding one from the page is refused."
+    )
+    if settings.code_self_service_git_unsandboxed:
+        self_registered = (
+            "self-registered repositories get no build tier, and those with a network "
+            "remote no compiler tier at all: LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lets "
+            "platform admins add them and runs their clone and fetch as plain processes, "
+            "which reach the remote with no egress proxy vetting its address."
+        )
     return [
         *problems,
         Problem(
@@ -802,9 +815,7 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             "warn",
             "Repository jobs (clone, fetch, dependency installs, compiler tiers) run "
             "unsandboxed: operator repositories' build tiers execute repository code on "
-            "this host; self-registered repositories get no build tier, those with a "
-            "network remote are not cloned or fetched, and adding one from the page is "
-            "refused.",
+            f"this host; {self_registered}",
             f"{_SANDBOX_FIX} Where the sandbox cannot run, list the repositories you trust "
             f"in LOOM_CODE_REPOS_JSON — {_SANDBOX_DOCS}.",
             source="runtime",

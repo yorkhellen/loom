@@ -2,6 +2,87 @@
 
 Runnable, self-contained scripts for `clickhouse-loom`. The memory example's output below was recorded against a live Loom; the handoff output illustrates its checked result. The memory example reads `LOOM_BASE_URL`, `LOOM_API_KEY` and `LOOM_ORG` from the environment and registers a throwaway namespace. The handoff example uses an existing namespace and two separate tokens. The TypeScript SDK ships the twin of `agent_memory.py` (and a session-resume example) under `sdk/typescript/examples/`.
 
+## software_factory_memory.py
+
+A software-factory memory reference for an implementation agent handing source evidence
+to a review agent. It uses the published Python SDK's `call_with_meta` interface and
+records operation receipts. Application code awaits every operation; there is no model
+tool selection, code generation or automated code review in this example.
+
+Before running:
+
+- Configure Loom to index a public open-source repository, such as `pallets/flask`.
+  Choose one fully qualified function whose body fits the response budget. Set
+  `INDEXED_COMMIT` to the full commit currently indexed and `PUBLIC_ISSUE_URL` to an
+  actual issue in that repository. The example checks the configured repository and
+  indexed commit; the operator establishes that the repository and issue are public.
+- Register a shared memory namespace and a review inbox owned by `factory-reviewer`.
+  Permit `factory-implementation` to post the `review` task kind. A task needing
+  admission stops the example; it does not change inbox policies or permissions.
+- Supply different service-account credentials with subjects `factory-implementation`
+  and `factory-reviewer`. Each needs writer access to the memory namespace and read
+  access to the code namespace. Export them as `LOOM_IMPLEMENTATION_API_KEY` and
+  `LOOM_REVIEW_API_KEY`, with `LOOM_BASE_URL` pointing to the deployment. Different
+  token strings alone do not establish distinct principals; the example checks the
+  posting subject and saved note's writing actor.
+- Copy the repository's `repo:<id>` tag from its configured checkout/session primer.
+  Keep credentials, personal data and private issue content out of the review claim.
+
+With `clickhouse-loom` installed, run from the repository root:
+
+```bash
+python sdk/python/examples/software_factory_memory.py \
+  --org "$LOOM_ORG" --memory-namespace "$LOOM_NAMESPACE" \
+  --code-namespace "$LOOM_CODE_NAMESPACE" --repo "$PUBLIC_REPO" \
+  --commit "$INDEXED_COMMIT" --issue-url "$PUBLIC_ISSUE_URL" \
+  --symbol "$QUALIFIED_FUNCTION" --repo-tag "$REPOSITORY_TAG" \
+  --review-inbox "$REVIEW_INBOX" \
+  --lesson "Check the function's error handling before changing its retry path."
+```
+
+The script performs this sequence:
+
+1. Read the code index watermark, resolve one complete function body, and read the
+   watermark again. An ambiguous, elided or moving index stops the sequence.
+2. Begin a run. Write an operator-supplied review claim under an unpredictable example
+   key, with its issue URL, commit, source URL and returned-body digest. Check the write
+   receipt and read the saved note back. The claim remains unverified.
+3. Post a review task carrying the source snapshot and memory key. The review agent
+   claims it, heartbeats its lease fence and reads the implementation agent's note.
+4. Fetch the source again through the review agent's credential. Compare its path,
+   symbol and returned-body digest with the handed-off snapshot. `unchanged_body`
+   means those fields match; `changed_body_needs_review` requests a recheck of the
+   claim. Neither result establishes whether the claim is correct.
+5. Complete the evidence-handoff task and report the run with outcome `none`, keeping
+   code-review and CI status explicitly unperformed. A completed handoff is not a
+   completed implementation, accepted review or passing CI result.
+6. In `finally`, cancel its unfinished task when it still holds the observed ownership
+   and fence, then delete only this invocation's generated memory key and verify it is
+   missing. A changed lease is left for the operator. The inbox, task and run history
+   remain; deletion tombstones the note and does not erase its history.
+
+Output contains operation names, available request IDs and categorical outcomes. It
+prints no source bodies, review claims, credentials or server error bodies. It disables
+automatic run recording, optional startup briefs, write coalescing, retries and
+rate-limit pacing; failed or ambiguous operations are not silently retried. Actual request IDs and
+outcomes come from the deployment; no captured live output is supplied here.
+A lost create response can leave a task or run whose ID the client did not receive;
+its operator must reconcile that history rather than repeat the call automatically.
+Cleanup reads and cancellation are separate operations. Do not let other workers
+claim or defer this example's task while it runs; the read does not reserve the task.
+
+The repository tag allows the configured code-link worker to consider the saved note,
+but this short run does not wait for that worker or verify native link states. Its
+source comparison is performed by application code against the served index, not
+uncommitted editor changes or an atomic repository snapshot. The memory write may use
+the server's configured embedding or conflict-check provider; the script makes no
+agent-model call. This is a transport and evidence-handoff reference, not a measurement
+of reasoning quality, security isolation, recommendation rank, time or cost.
+
+See [shared-agent memory](../../../docs/use-cases/multi-agent.md),
+[code-linked memory](../../../docs/use-cases/memory-linked-to-code.md) and
+[run reporting](../../../docs/features/runs.md) for the supported boundaries.
+
 ## agent_memory.py
 
 An agent that remembers what a user said, recalls it by meaning, answers with citations (or abstains), and tells loom which memories it used.
@@ -92,3 +173,20 @@ the example cancels unfinished work with its current owner's token and deletes
 the result memory, then checks that the memory is missing. The inbox and task
 history remain; there is no inbox-delete operation. A failed check or API call
 raises an error.
+
+## code_lookup.py
+
+An explicit code lookup through the same `AgentTools` dispatcher used by a model's
+selected call. Requires an existing code index and a token with read access; it creates
+no namespace or memory and calls no agent model. Search uses server embeddings.
+
+```bash
+LOOM_BASE_URL=https://loom.example LOOM_API_KEY=… python code_lookup.py \
+  --org acme --memory-namespace assistant-memory --code-namespace code-repo \
+  --kind callers --depth 2 pkg.Reader.read
+```
+
+`--help` sends no requests. Mocked SDK transport tests cover the binding; no live
+result or performance claim is attached to this example. See the
+[code tools guide](https://clickhouse.github.io/loom/guides/code-tools/) for budgets,
+scope and evidence limits.

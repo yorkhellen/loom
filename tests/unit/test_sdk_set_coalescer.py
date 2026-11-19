@@ -720,8 +720,13 @@ async def test_close_waits_for_a_first_set_queued_behind_a_flush(agent: Agent) -
 
 
 async def test_a_first_set_its_caller_cancels_still_lands_before_the_windows_flush(
-    agent: Agent,
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     t: Any = agent.transport
     t.set_gates = {"v1": asyncio.Event()}
     x = asyncio.create_task(agent.memory.set("x", "x"))
@@ -812,11 +817,12 @@ async def test_close_returns_while_a_writer_keeps_setting(agent: Agent) -> None:
 async def test_a_set_made_after_a_cancelled_close_began_is_written(agent: Agent) -> None:
     t: Any = agent.transport
     t.bulk_gate = asyncio.Event()
+    t.set_gates["a"] = t.bulk_gate
     earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
     await _settle()
     closing = asyncio.create_task(agent.close())
     await _settle()
-    closing.cancel()
+    assert closing.cancel()
     await _settle()
     late = [asyncio.create_task(agent.memory.set(k, k)) for k in "fghi"]
     await _settle()

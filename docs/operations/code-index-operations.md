@@ -592,7 +592,8 @@ these hosts without the sandbox.
 
 Unless `LOOM_CODE_SANDBOX_REQUIRED` is set, every host still indexes the repositories
 listed in `LOOM_CODE_REPOS_JSON`; only repositories added from the page need the
-sandbox. _Without the sandbox_ says what that runs, and the
+sandbox, or `LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` for their parser tier alone.
+_Without the sandbox_ says what that runs, and the
 [quickstart](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)
 has the released stack's commands.
 
@@ -727,6 +728,43 @@ restrict user namespaces, but they drop the whole profile.
   compiler tiers but get no build-based tier (C/C++);
 - adding a repository or a branch from the page is refused with `SANDBOX_UNAVAILABLE`.
 
+**Self-registered repositories without the sandbox.**
+`LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED=true` changes the second and the last item on a
+host that cannot run the sandbox. `code.repo.remote_branches`, `code.repo.add` and
+`code.repo.add_branch` are no longer refused for the missing sandbox, and the ingest pass
+and history reads clone and fetch a self-registered repository whose remote is a network
+URL, so it gets the parser tier. It still gets no compiler tier, build-based or static:
+their dependency installs, module downloads and submodule fetches would run without the
+egress proxy too. `workers.status` names the skip.
+
+The git jobs this allows (`ls-remote`, the bare clone, fetches) run as plain processes.
+They run no repository code: a clone or a fetch transfers objects and refs, never hooks
+or configuration, the mirror is bare, and git reads no system or global configuration.
+Nothing vets where they connect. Git reaches the host and port the remote names and a
+host that one redirects to, private and link-local addresses included, and an `ssh`
+remote runs `ssh` with the server's `HOME` and the keys in it. Whoever names a remote
+therefore chooses what the server connects to, so Loom refuses to load the setting unless
+`LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY=true` leaves those three ops to platform
+admins ([self-service repositories](../features/code-index/repositories.md#self-service-repositories)).
+With auth off that rule passes a call that carries no principal, so the setting is
+refused as well there (`LOOM_AUTH_REQUIRED=false` or
+`LOOM_IDENTITY_PROVIDER=single-user`). It is refused with `LOOM_MCP_AUTH_MODE=open` too,
+where such a call can arrive with auth on: the rule refuses it, and the setting still
+needs every caller authenticated. It is also refused together with
+`LOOM_CODE_SANDBOX_REQUIRED=true`, under which no repository job runs as a plain process.
+
+The setting also resumes the git jobs of entries that members added before
+`LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` was set. They keep the remotes their adders
+named and are cloned and fetched the same way. Before turning it on, list the branches in
+the registry (the active rows of `loom.code_repos` whose `row_kind` is not `access`;
+`code.repos` lists only what its caller may read) and have those a platform admin would
+not add removed with `code.repo.remove`.
+
+`/v1/health` and `loom doctor` keep reporting `repo_jobs_unsandboxed` as a warning, with
+a message that names the setting. The dashboard reads that warning, not the setting, and
+offers no **Add repository** or **Add branch** while it stands: call `code.repo.add` and
+`code.repo.add_branch` directly.
+
 Each Go entry has its own module cache under `LOOM_CODE_SCIP_GO_MODCACHE`
 (`<root>/<org>/<namespace>`): `go` does not re-check the sums of modules already in its
 cache, so a cache one repository's job wrote is never another's.
@@ -762,9 +800,24 @@ It writes:
   `code.coverage_claim` can tell "executed by many tests" from "executed by none".
 
 Rows the newest run no longer has are tombstoned, and only after every slice was read.
-`code.coverage_claim` ranks a measured row as `executed`, above every other tier, when its
-ranges meet the subject's span; a subject whose file the run covered but whose lines no
-test executed is `uncovered`, with the measurement in `measured`.
+`code.coverage_claim` ranks a verified measured row as `executed`, above every other tier,
+when its ranges meet the subject's span. Verified measurements for every source file at
+the current repository watermark can establish that no test executed the subject, with
+the evidence in `measured`.
+
+Test names can be repository-relative file paths or pytest node IDs such as
+`tests/test_example.py::TestExample::test_value[param]|run`. The import removes the
+function, class, parameter and setup/run/teardown context suffixes and leading `./`, then
+requires the test file to exist in the namespace's live index. Paths relative to the
+integration or query test directory also resolve through those layouts. Contexts that
+map to one source/test-file pair contribute their union of executed lines; overlapping
+lines count once, and the pair keeps its strongest measured specificity score.
+
+The source must expose the per-test line records in `checks_coverage_lines` and each
+run's commit in `checks`; a coverage database or JSON report needs conversion to those
+tables. Re-run `loom code coverage-import --namespace <namespace> --dry-run` to check
+`unmapped_tests`, then import without `--dry-run` to rebuild stored pairs from the run.
+Updating the server alone does not rebuild imported coverage.
 
 ```bash
 LOOM_CODE_COVERAGE_SOURCE_URL=https://<coverage server>
@@ -774,6 +827,39 @@ loom code coverage-import --namespace <namespace> --dry-run   # counts only, wri
 loom code coverage-import --namespace <namespace>
 LOOM_CODE_COVERAGE_IMPORT_ENABLED=true                         # then daily, in the workers
 ```
+
+### Coverage freshness
+
+Line ranges describe the source measured by their run. A coverage row supports current
+execution claims only when its commit matches the source file's `indexed_commit` and the
+namespace has a `git_head` watermark. A symbol's selected spans must carry the same
+indexing commit; missing or inverted line extents and lagging compiler metadata remain
+unverified.
+A missing symbol extent never expands to whole-file execution. The measured
+test must also remain live at the matching indexing commit before its pair counts as
+`executed`. An unchanged file keeps its indexing commit when the repository advances,
+so advancing the head alone does not invalidate positive evidence.
+
+Other coverage rows remain file associations with method `coverage_history`, tier
+`file_reference`, and evidence marked `unverified`. Their old line numbers are never
+intersected with current symbol spans. These rows alone produce verdict `unknown`.
+Independent strong evidence can still establish `covered_by`.
+
+`measured.freshness` is `verified`, `partial`, or `unverified`. Its `files` dictionary
+reports each measurement commit, indexing commit, selected `symbol_commits`, and
+freshness. `commits` lists all measurement commits; `commit` is empty when they differ.
+`paths` and `hits` include only
+verified measurements. `unverified_paths` names measurements without matching identity;
+`unmeasured_paths` names source files absent from the import. A partial or unverified
+measurement cannot establish that the current subject was not executed. A negative also
+requires `run_current: true`: all measurement commits match `index_commit`, the current
+repository watermark. Tests added after an older run could execute an unchanged source.
+
+Different commits do not prove different file contents. The serving read compares commit
+identities without reading historical repository objects, so an unchanged file measured
+at another commit can remain unverified. Missing identity metadata also remains
+unverified. Matching measurement, source, symbol-span, and test indexing commits verify
+line evidence. The import retains historical evidence until a complete run replaces it.
 
 ## Another branch
 

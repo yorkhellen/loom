@@ -146,6 +146,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "connection.disconnect": ("dashboard",),
+    "connection.list": ("dashboard",),
     "consolidations.list": ("dashboard",),
     "context.fetch": ("sdk_method",),
     "context.offload": ("sdk_method",),

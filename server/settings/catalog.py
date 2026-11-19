@@ -956,6 +956,10 @@ class CodeSettings(BaseModel):
     # for a namespace a member added from the page is skipped.
     # Off = the operator's JSON is the only source.
     code_self_service_enabled: bool = True
+    # True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to
+    # platform admins: a token scoped to namespaces, or a trusted caller acting for
+    # another subject, is refused too. False: each op's own role decides.
+    code_self_service_platform_admin_only: bool = False
     # Where the code ingest worker clones a self-service entry's bare mirror (one per
     # GitHub repository, shared by its branches).
     code_repos_root: str = "var/code_repos/self"
@@ -1030,6 +1034,13 @@ class CodeSettings(BaseModel):
     # missing sandbox as an error. False: without the sandbox, jobs fall back
     # to plain processes as "Without the sandbox" in code-index-operations.md says.
     code_sandbox_required: bool = False
+    # True lets a host without the sandbox add and fetch a self-service entry with a
+    # network remote: its git jobs (ls-remote, clone, fetch) run as plain processes and
+    # it gets no compiler tier. Refused at load without
+    # code_self_service_platform_admin_only, where a request can carry no principal
+    # (auth off, or mcp_auth_mode open), and with code_sandbox_required. False: such an
+    # entry needs the sandbox.
+    code_self_service_git_unsandboxed: bool = False
     # Largest file one process of a sandboxed repository job may write, in MiB (a
     # pack or index.scip).
     code_sandbox_max_file_mb: int = 32768
@@ -2330,6 +2341,49 @@ class KnowledgeSettings(BaseModel):
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
 
     # ---- document sources ----
+    # OAuth client id for personal Drive connections; empty disables the provider.
+    connect_gdrive_client_id: str = ""
+    # Secret of that Drive OAuth registration; kept outside source rows.
+    connect_gdrive_client_secret: str = ""
+    # Public-integration client id for personal page-store connections; empty disables it.
+    connect_notion_client_id: str = ""
+    # Secret of that page-store registration; kept outside source rows.
+    connect_notion_client_secret: str = ""
+    # OAuth client id for personal project-tracker connections; empty disables it.
+    connect_linear_client_id: str = ""
+    # Secret of that project-tracker registration; kept outside source rows.
+    connect_linear_client_secret: str = ""
+    # The operator has restricted the public integration to read-content capability.
+    # Its token response cannot prove this registration setting; false disables it.
+    connect_notion_read_content_only: bool = False
+    # Seconds for the whole optional live-search leg, including final membership checks.
+    # At most five; provider credential deadlines may shorten it further.
+    knowledge_live_search_timeout_s: float = Field(default=5.0, gt=0, le=5.0)
+    # Connected registrations searched per live-search request, from one to three.
+    knowledge_live_search_max_sources: int = Field(default=3, ge=1, le=3)
+    # Live hits across all registrations, and the per-provider page bound, from one to ten.
+    knowledge_live_search_max_hits: int = Field(default=10, ge=1, le=10)
+    # Bytes read from one live-search provider response, at most 256 KiB.
+    # The document-source download limit may shorten this bound further.
+    knowledge_live_search_response_max_bytes: int = Field(default=256 * 1024, ge=1, le=256 * 1024)
+    # Registered Drive items searched per source, from one to four; no pagination.
+    knowledge_live_search_max_items: int = Field(default=4, ge=1, le=4)
+    # Native parent lookups per Notion membership check, from zero to three.
+    # Zero accepts directly registered pages and database membership without parent fetches.
+    knowledge_live_search_max_ancestors: int = Field(default=3, ge=0, le=3)
+    # Seconds for local connection stops, including their source retirement writes.
+    knowledge_connected_stop_timeout_s: float = Field(default=20.0, gt=0)
+    # Seconds for best-effort provider revocation after every local stop has committed.
+    knowledge_connected_revoke_timeout_s: float = Field(default=5.0, gt=0)
+    # Seconds the renewed account-generation lease lives. Source leases follow it;
+    # provider requests hold neither.
+    knowledge_connected_lease_ttl_s: float = Field(default=60.0, gt=0)
+    # Seconds a connection change waits for another holder's account-generation lease.
+    knowledge_connected_lease_wait_s: float = Field(default=5.0, ge=0)
+    # Maximum complete owner scan; exceeding it refuses instead of stopping a subset.
+    knowledge_connected_registry_scan_limit: int = Field(default=4096, ge=1)
+    # Registrations per page during root-secret resealing.
+    knowledge_connected_registry_page_size: int = Field(default=256, ge=1, le=4096)
     # Seconds one connected-account OAuth request may take, including its response.
     # The caller's remaining deadline can shorten this bound.
     knowledge_connected_oauth_timeout_s: float = Field(default=30.0, gt=0)
@@ -2339,6 +2393,10 @@ class KnowledgeSettings(BaseModel):
     # Active document sources (knowledge.source.add) one namespace may register; an
     # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
+    # Active connected sources per namespace, separate from the shared/crawl quota.
+    knowledge_connected_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=64, ge=1)
+    # Active connected sources one canonical person may register in one namespace.
+    knowledge_connected_sources_max_per_person: Annotated[int, LIVE] = Field(default=8, ge=1)
     # Seconds a document source's probe (add, update, check, rotate) or tracker short-id
     # lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE
     # and check answers reachable: false.
@@ -2354,6 +2412,9 @@ class KnowledgeSettings(BaseModel):
     # Mirrored reads require a complete listing and group observation within this
     # many seconds; missing or older evidence admits nobody.
     knowledge_source_acl_stale_seconds: int = Field(default=3600, ge=1)
+    # Maximum team and member rows read for one project's complete permission list.
+    # A larger list refuses publication rather than granting from a partial page.
+    knowledge_source_acl_max_entries: int = Field(default=10000, ge=1)
     # Enable optional source push setup, callbacks and Drive renewal; false keeps polling only.
     knowledge_source_push_enabled: bool = False
     # Seconds between bounded channel-renewal pages; channels renew a day before expiry.
@@ -2548,7 +2609,8 @@ class McpSettings(BaseModel):
     #                 naming another toolset gets it, and the token is the boundary.
     #   "all"       — the stable ops plus the experimental ops the core or atomic
     #                 roster lists; the other experimental ops stay callable by name,
-    #                 and _MCP_HIDDEN_OPS are never listed.
+    #                 and _MCP_HIDDEN_OPS are never listed, the two upload ops under
+    #                 mcp_code_upload_tools aside.
     # An unknown value is "core".
     mcp_toolset: str = "core"
     # tools/list schema profile: "standard" (curated prose + inputSchema),
@@ -2576,6 +2638,10 @@ class McpSettings(BaseModel):
     # List code.* tools on the MCP surface (core toolset union). Off = code
     # ops are HTTP/SDK-only.
     mcp_code_tools: bool = False
+    # Serve the compiler-tier upload ops (code.scip_ingest, code.scip_status) over MCP, which
+    # hides both when off. On, an upload is accepted, on every transport, only for a
+    # namespace that has a repository entry.
+    mcp_code_upload_tools: bool = False
 
 
 # ===== Memory =================================================================
@@ -4258,7 +4324,7 @@ class ObservabilitySettings(BaseModel):
     otel_environment: str = "dev"
     # Comma-separated path regexes the FastAPI instrumentation opens no span
     # for (health polls). "" = instrument every path but the sign-in routes
-    # (/oauth/), which are always left out: their URLs carry codes.
+    # (/oauth/ and /v1/connect/), which are always left out: their URLs carry codes.
     otel_excluded_urls: str = "/v1/health"
 
     # Scales every op's p99 budget (OP_BUDGETS_P99_MS in server/settings/catalog.py,
@@ -5976,6 +6042,10 @@ class TrackerSettings(BaseModel):
 # the handler time a budget measures.
 
 OP_BUDGETS_P99_MS: dict[str, int] = {
+    # Own connection listing rechecks current identity and provider registration;
+    # disconnect includes bounded local retirement followed by best-effort revocation.
+    "connection.list": 1000,
+    "connection.disconnect": 30000,
     "admin.users": 300,
     "agents.connected": 120,
     # One agent answer: a model turn per tool call (measured p95 10.7 s, at most 15 s

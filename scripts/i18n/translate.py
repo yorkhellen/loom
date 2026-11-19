@@ -398,7 +398,9 @@ def _label_links(text: str) -> tuple[tuple[str, str], ...]:
     return tuple((m[1], m[0].partition("](")[2]) for m in LINK_TEXT.finditer(text))
 
 
-def _label_nodes(text: str) -> dict[tuple, context.Label]:
+def _label_nodes(
+    text: str, *, tables: chunks.TableAnalysis | None = None
+) -> dict[tuple, context.Label]:
     # Retain character offsets so a request can be checked inside its source containers.
     def blank(value: str) -> str:
         return "".join("\n" if c == "\n" else " " for c in value)
@@ -433,7 +435,7 @@ def _label_nodes(text: str) -> dict[tuple, context.Label]:
             key = (*identity, seen[identity])
             seen[identity] += 1
             nodes[key] = context.Label(inner, links=links, start=match.start(), end=match.end())
-    nodes.update(chunks.table_labels(text))
+    nodes.update(chunks.table_labels(text) if tables is None else tables.labels)
     return nodes
 
 
@@ -472,6 +474,8 @@ def _label_differences(
     translation: str,
     source_path: str,
     scope: context.SourceContext | None = None,
+    *,
+    tables: tuple[chunks.TableAnalysis, chunks.TableAnalysis] | None = None,
 ) -> list[str]:
     english = scope.english if scope else source
     if scope and english[scope.start : scope.end] != source:
@@ -479,7 +483,8 @@ def _label_differences(
     candidate = scope.candidate(translation) if scope else translation
     start, end = (scope.start, scope.end) if scope else (0, len(source))
     target_end = start + len(translation)
-    wanted, actual = _label_nodes(english), _label_nodes(candidate)
+    wanted = _label_nodes(english, tables=tables[0] if tables is not None else None)
+    actual = _label_nodes(candidate, tables=tables[1] if tables is not None else None)
     source_labels: Counter[str] = Counter()
     target_labels: Counter[str] = Counter()
     protections = _source_protections(wanted, source_path)
@@ -520,12 +525,13 @@ def differences(
     *,
     source_path: str = "",
     source_context: context.SourceContext | None = None,
+    _tables: tuple[chunks.TableAnalysis, chunks.TableAnalysis] | None = None,
 ) -> list[str]:
     """How `translation` breaks the invariants of `source`; empty when it keeps them.
     A translation may add a number (a spelled-out one written as digits), never drop one,
     and may not hand back a heading, link text, alt text or table cell in English."""
     source_path = source_context.path if source_context else source_path
-    found = _label_differences(source, translation, source_path, source_context)
+    found = _label_differences(source, translation, source_path, source_context, tables=_tables)
     if code_blocks(source) != code_blocks(translation):
         found.append("code blocks: copy every fenced code block unchanged, in the same order")
     want, got = invariants(source), invariants(translation)
@@ -535,6 +541,14 @@ def differences(
         extra = Counter() if name == "numbers" else actual - expected
         if missing or extra:
             found.append(f"{name}: missing {sorted(missing)[:8]}, unexpected {sorted(extra)[:8]}")
+    return found
+
+
+def page_differences(source: str, translation: str, *, source_path: str) -> list[str]:
+    tables = chunks.table_analysis(source), chunks.table_analysis(translation)
+    found = differences(source, translation, source_path=source_path, _tables=tables)
+    if tables[0].shape != tables[1].shape:
+        found.append("table row/cell layout differs after request assembly")
     return found
 
 
@@ -860,9 +874,7 @@ def translate_page(source: str, lang: Language, client: Any, spend: Spend) -> No
     body = "\n".join(replies)
     # A section can borrow an English label from another part of the page; `check` reads the
     # whole page, so the page is held to the same rule before it is written.
-    problems = differences(english, body, source_path=source)
-    if chunks.table_shape(english) != chunks.table_shape(body):
-        problems.append("table row/cell layout differs after request assembly")
+    problems = page_differences(english, body, source_path=source)
     if problems:
         raise TranslationDiffers(f"assembled page differs: {problems}")
     path = target_path(lang.code, source)

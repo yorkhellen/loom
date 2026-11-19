@@ -251,8 +251,11 @@ def _whole_case(current=None):
     return case, SourceOrigins(raw, now, "ko")
 
 
-def test_changed_whole_preserves_origin_and_never_becomes_same_input_correction():
+@pytest.mark.parametrize("replacement", [False, True], ids=["insertion", "interior-replacement"])
+def test_changed_whole_preserves_origin_and_never_becomes_same_input_correction(replacement):
     raw = "# Guide\n\nBefore.\nAdded 界.\n\nAfter.\n"
+    if replacement:
+        raw = raw.replace("Before.", "Replaced.")
     case, origins = _whole_case(raw)
     case[-1][case[2][0].reply_ref] = False
     plan = _plan(
@@ -265,11 +268,19 @@ def test_changed_whole_preserves_origin_and_never_becomes_same_input_correction(
     assert plan.units[0].disposition == "changed"
     assert plan.units[0].original == case[2][0]
     assert plan.units[0].fault_ids == ("finding",)
+    assert plan.partitions == case[1]
+    assert plan.completions == case[2]
+    assert plan.history_manifest_sha256 == h.completion_history_sha256(case[1], case[2], case[-1])
+    assert (plan.units[0].scope.start, plan.units[0].scope.end) == (0, len(case[0].english))
 
 
 @pytest.mark.parametrize("fits", [False, True])
-def test_changed_whole_uses_utf8_bound_without_splitting(fits):
-    case, origins = _whole_case("# Guide\n\nBefore.\nAdded 界.\n\nAfter.\n")
+@pytest.mark.parametrize("replacement", [False, True], ids=["insertion", "interior-replacement"])
+def test_changed_whole_uses_utf8_bound_without_splitting(fits, replacement):
+    raw = "# Guide\n\nBefore.\nAdded 界.\n\nAfter.\n"
+    if replacement:
+        raw = raw.replace("Before.", "Replaced.")
+    case, origins = _whole_case(raw)
     plan = _plan(
         case,
         faults=(),
@@ -310,12 +321,12 @@ def test_completed_current_input_cannot_be_repaid_as_changed_old_input(eligible)
 
 
 @pytest.mark.parametrize(
-    "bad", ["absent", "forged", "noninsertion", "ambiguous", "boundary", "language"]
+    "bad", ["absent", "forged", "endpoint", "ambiguous", "boundary", "language"]
 )
 def test_changed_whole_requires_valid_raw_proof(bad):
     raw = "# Guide\n\nBefore.\nAdded.\n\nAfter.\n"
-    if bad == "noninsertion":
-        raw = raw.replace("Before.", "Replaced.")
+    if bad == "endpoint":
+        raw = raw.replace("# Guide\n", "# Changed\n", 1)
     elif bad == "ambiguous":
         raw = raw.replace("Before.", "# Guide\n\nBefore.")
     elif bad == "boundary":

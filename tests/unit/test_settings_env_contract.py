@@ -75,6 +75,9 @@ _CROSS_CHECKED = {
     # Host lists checked by a model validator (test_llm_gateway.py).
     "memory_classify_private_hosts",
     "memory_webhook_private_hosts",
+    # Refused beside the required sandbox, which the sweep also sets
+    # (test_repo_job_sandbox.py).
+    "code_self_service_git_unsandboxed",
 }
 
 

@@ -446,7 +446,9 @@ def _run_out_after(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     def _budget() -> Any:
         budget = real_budget()
         return SimpleNamespace(
-            started=budget.started, exhausted=lambda: late["out"] or budget.exhausted()
+            started=budget.started,
+            stop_after=budget.stop_after,
+            exhausted=lambda: late["out"] or budget.exhausted(),
         )
 
     monkeypatch.setattr(source_sync.gdrive, name, _then_out)

@@ -103,7 +103,14 @@ def canonical_links(text: str, current: str) -> str:
     return t.in_prose(text, fix)
 
 
-def candidate_problems(path: str, text: str, *, current: bool = True) -> list[str]:
+def candidate_problems(
+    path: str,
+    text: str,
+    *,
+    current: bool = True,
+    inventory: frozenset[str] | None = None,
+) -> list[str]:
+    """Reuse a pass's membership snapshot; check the used source's path and hash afresh."""
     path = publication_path(path)
     owned = owner(path, text)
     if owned is None:
@@ -112,8 +119,16 @@ def candidate_problems(path: str, text: str, *, current: bool = True) -> list[st
     stamp = t.STAMP.match(text)
     assert stamp
     model = t.os.environ.get("LOOM_I18N_MODEL", t.DEFAULT_MODEL)
-    if current and (source not in t.sources() or stamp[2] != t.blob(source) or stamp[3] != model):
-        return [f"{path}: pending output is stale"]
+    if current:
+        if inventory is None:
+            inventory = frozenset(t.sources())
+        if (
+            source not in inventory
+            or not regular(source)
+            or stamp[2] != t.blob(source)
+            or stamp[3] != model
+        ):
+            return [f"{path}: pending output is stale"]
     expected_header = t.header(source, lang, stamp[3], stamp[2])
     if not text.startswith(expected_header):
         return [f"{path}: stamp or banner differs"]
@@ -124,9 +139,7 @@ def candidate_problems(path: str, text: str, *, current: bool = True) -> list[st
     body = strip_language_line(text[len(expected_header) :])
     english = canonical_links(english, source)
     body = canonical_links(body, path)
-    problems = t.differences(english, body, source_path=source)
-    if t.chunks.table_shape(english) != t.chunks.table_shape(body):
-        problems.append("table row/cell layout differs after request assembly")
+    problems = t.page_differences(english, body, source_path=source)
     return [f"{path}: {problem}" for problem in problems]
 
 
@@ -288,7 +301,7 @@ def present_problems() -> list[str]:
         current = bool(
             stamp and stamp[1] in inventory and stamp[2] == t.blob(stamp[1]) and stamp[3] == model
         )
-        problems += candidate_problems(path, text, current=current)
+        problems += candidate_problems(path, text, current=current, inventory=inventory)
     problems += link_problems()
     problems += t.untranslated_pages()
     problems += [

@@ -36,6 +36,7 @@ or needs another database, vector store or cache.
 | Dify                           | Remember, Recall, Search knowledge              | `integrations/dify` standalone plugin                     | Native Dify tools                                                        |
 | Haystack                       | `LoomDocumentStore`, `LoomRetriever`            | Python, `loom.integrations.haystack`                      | `DocumentStore` protocol, retrieval component                            |
 | Agno                           | `LoomMemoryDb`                                  | Python, `loom.integrations.agno`                          | `BaseDb` user-memory methods                                             |
+| Langflow                       | Loom                                            | `integrations/langflow` custom component                  | Langflow `Component`                                                     |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -61,6 +62,15 @@ async with Agent(org="acme", namespace="support") as agent:
 ```
 
 `invoke` needs a `SyncAgent`; `ainvoke` takes an `Agent` or a `SyncAgent`.
+
+The Python retrievers retain their bound and ambient `SessionProtection` contributors at
+construction and on each callback, including after client rebinding and across worker
+threads. When the caller enters `family.automatic()`, retained protection also guards
+automatic retrieval; without that context, direct retrieval and retriever tools stay
+explicit and observe responses. A mirrored result marks all retained families before
+documents return. A failed durable mark withholds the documents, and a marked family
+blocks later automatic retrieval. Use separate retrievers for independent conversation
+families.
 
 | Retriever                | `page_content`  | `id`                                                                                | `metadata`                                                                                        |
 | ------------------------ | --------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -165,6 +175,16 @@ or `flush` is called, which may run a call on another event loop than the one an
 was opened on; an `Agent` serves `aget` and `aput` on its own loop. `Memory` keeps its
 short-term messages in its own chat store (in process by default); only what the block
 receives reaches Loom.
+
+Wrap automatic callbacks in the application's `SessionProtection.automatic()` scope.
+The retriever and memory block retain the families bound at construction and contributed
+by earlier callbacks, including across client rebinding and sync worker threads. A
+mirrored recall marks those families before returning. Later automatic calls refuse
+protected work; explicit calls keep their response observers without becoming automatic.
+`aflush` retains each Loom block's contributors before reading the native buffer. A
+refused flush raises and leaves that window active for retry, without archiving it or
+acknowledging an unsent extraction. The native framework owns its overflow archival;
+`aflush` does not roll it back.
 
 ## Haystack
 
@@ -351,6 +371,14 @@ with SyncAgent(org="acme", namespace="research") as agent:
     crew.kickoff()
 ```
 
+Use one `LoomCrewMemory` per conversation, bound to that conversation's logical session
+family. Constructor and callback contributors remain bound after client rebinding,
+including contributors seen by `extract_memories`. Inside an application-owned automatic
+scope, protected contributors refuse recall and capture before HTTP. Recalled protection
+is observed before matches return to the crew. Native memory tools called outside an
+automatic scope remain explicit. `user_id` and the native `private` flag do not select
+session protection.
+
 | A crew run asks memory to                               | Loom                                                                                                                 |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | recall what bears on a task (`recall`)                  | `memory.search` of the namespace the crew writes to; nothing when Loom abstains, `score` is the similarity           |
@@ -421,6 +449,14 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 An `AssistantAgent` holding a `LoomMemory` cannot be dumped with `dump_component`: the Loom
 agent and its credential are not component config.
 
+Bind one memory instance per conversation to its application-owned `SessionProtection`
+family. Constructor and callback contributors remain bound across context exit and
+client rebinding. `update_context` snapshots them before awaiting native messages and
+runs as automatic work. A marked recall is durably observed before system-message
+injection; later automatic work stops. Direct `query` and `add` remain explicit unless
+their caller owns automatic work, while their responses still observe known families.
+Native user and session ids do not select protection.
+
 ## AG2
 
 An AG2 1.3 agent gets context through assembly policies, which run before each model call,
@@ -466,6 +502,14 @@ traceback AG2 sends for an exception, and the run goes on. Put the policy before
 trimming policy (`SlidingWindowPolicy`, `TokenBudgetPolicy`), which can cut the user's
 request out of the events the policy reads. Those policies trim events, not the prompt, so
 `top_k` is what bounds the memory block.
+
+Use one recall policy per conversation, with its Loom client bound to the
+application-owned `SessionProtection` family. The policy retains constructor and
+callback contributors across context exit and client rebinding. Native user and session
+ids do not select protection. A protected contributor stops automatic recall with
+`AutomaticCaptureSuppressed` before dispatch. A marked recall is durably observed before
+its content reaches the current prompt; later automatic recalls stop. Model-selected
+`loom_tools` calls remain explicit operations.
 
 ## Microsoft Agent Framework
 
@@ -657,6 +701,15 @@ makes a session id unique per user only. A search reads all of the user's memori
 namespace, from every session. Remaining result slots hold up to 100 knowledge documents shared by
 the app namespace; documents carry no fact-deletion id.
 
+The Python service retains the application-owned `SessionProtection` families present
+at construction and method entry. Use one service per logical session family; native
+app, user and session ids do not select protection. Inside `family.automatic()`, a
+protected contributor suppresses further content requests, including later extraction
+batches and the optional knowledge search. If that second search is suppressed after
+a marked memory result, the callback raises `AutomaticCaptureSuppressed` and returns
+no memory response. Calls outside automatic context remain explicit and observe
+responses through the retained families. Exact deletion remains a reference operation.
+
 | ADK                     | Loom                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `add_session_to_memory` | the text of the session's events, without the ones a rewind took back, sent to `memory.set_from_messages` (400 messages a call, the op's cap); Loom extracts the facts and resolves duplicates and conflicts. A session added again is extracted again, so a callback that runs every turn, as `after_agent_callback` does, saves that turn's events, as in the example                                                                                                                                                               |
@@ -747,6 +800,13 @@ bound user; a different user is refused. Agno's manager defaults an omitted user
 (default `default`) separates applications sharing that user. Keys and the derived
 Loom session include both user and store digests. Separate namespaces and restricted
 tokens remain the boundary for mutually untrusted applications.
+
+Bind one database per conversation to its application-owned `SessionProtection`
+family. Constructor and callback contributors remain bound across context exit and
+client rebinding. Automatic invocations join those retained contributors, so a protected
+family stops later automatic reads and writes before dispatch. Explicit database calls
+remain explicit after the automatic invocation ends, and every response still observes
+the known families. Native user and store ids do not select protection.
 
 The database implements single/bulk upsert, get, list, content/topic/agent/team filters,
 sorting, pagination, topic listing, statistics and deletion. Reads hydrate full values
@@ -1135,6 +1195,18 @@ fleet support or initialize a capsule during restore.
 | `top_k`                      | 5        | memories per turn, from 1 to 500                                                                                                                                                            |
 | `honour_abstain`             | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                                                                                                           |
 | `defer`                      | `True`   | queue the extraction on the server instead of waiting                                                                                                                                       |
+
+## Langflow
+
+The [Loom Langflow component](../../../integrations/langflow/README.md) saves a memory,
+searches memories, and searches knowledge documents from a Langflow flow. It is a
+Langflow `Component` with typed inputs for the namespace, the user, and the query, plus
+an action dropdown (`save`, `search memory`, `search documents`). Install
+`clickhouse-loom` in Langflow's Python environment and load
+`integrations/langflow/loom_component.py` as a custom component. The component
+constructs a `SyncAgent` and calls `memory.set`, `memory.search`, or `knowledge.search`;
+the user input is `user_id` on the memory write and search. Knowledge search is
+namespace-scoped. Data stays in your Loom deployment; the component adds no store.
 
 ## Agent orchestrators
 

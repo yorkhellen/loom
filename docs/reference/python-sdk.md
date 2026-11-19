@@ -243,6 +243,10 @@ What an agent framework holds between turns:
   `await execute(name, arguments)` that returns the string the model reads:
   `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`,
   `loom_note`. The schemas match the TypeScript SDK's.
+  An explicit `code_namespace` offers `loom_code_lookup` first; `only=["loom_code_lookup"]`
+  selects just that read-only tool. The application fixes the code scope separately
+  from memory. See [code tools](../guides/code-tools.md) for arguments, evidence limits
+  and valid JSON result budgeting.
 - `bot.run_scope(goal=...)` is an `async with` block that begins a run, stamps
   its `run_id` on the writes inside and labels the reads with it (the
   `X-Loom-Run-Id` header, not a filter), and on exit credits the keys a

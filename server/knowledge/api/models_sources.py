@@ -3,7 +3,7 @@ register for Loom to pull from. No output carries a credential."""
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -106,6 +106,12 @@ class KnowledgeSourceEntry(BaseModel):
     # page store's pages and databases; `recording`: the transcripts of a meeting
     # store's recordings).
     kind: str
+    # The registration's credential class; never the credential or account identity.
+    credential_mode: str = "shared"
+    # Namespace-wide or checked mirrored document access.
+    access: str = "namespace"
+    # Canonical connected owner, only in the owner's permitted detail projection.
+    owner_subject: str = ""
     # The things the source reads (folders, files, shared drives, filters, pages,
     # databases, projects); [] for a recording source.
     items: list[dict[str, Any]] = Field(default_factory=list)
@@ -207,8 +213,12 @@ class KnowledgeSourceAddInput(BaseModel):
         description="gdrive with items or links: the file kinds read, of docs, slides, pdf, "
         "pptx, docx (default all but docx).",
     )
+    credential_mode: Literal["shared", "connected"] = Field(
+        "shared",
+        description="Use the supplied shared credential, or your own mirrored connected account.",
+    )
     credential: str = Field(
-        ...,
+        "",
         description="The source's read-only credential (gdrive: a service account's JSON key, "
         "with the folders shared to the account read-only; linear: a read-only API key of an "
         "account that sees the projects; notion: an integration token with read content "
@@ -363,6 +373,12 @@ class KnowledgeSourceInspectOutput(BaseModel):
     name: str
     # The source's kind.
     kind: str
+    # The registration's credential class; never the credential or account identity.
+    credential_mode: str = "shared"
+    # Namespace-wide or checked mirrored document access.
+    access: str = "namespace"
+    # Canonical connected owner, only in the owner's permitted detail projection.
+    owner_subject: str = ""
     # The things the source reads; [] for a recording source.
     items: list[dict[str, Any]] = Field(default_factory=list)
     # The file kinds a gdrive source reads; [] for another kind.
@@ -383,7 +399,8 @@ class KnowledgeSourceInspectOutput(BaseModel):
 class KnowledgeSourceCheckInput(BaseModel):
     """Probe a registered document source with its stored credential now (a check of
     every item, or of the 20 added last, and a listing), nothing written. A namespace
-    admin may, since the probe spends the source's rate limit."""
+    admin may; a connected owner may also check their own source. An administrator
+    checking another person's connection receives source-level standing only."""
 
     org: str = Field(..., description="The org.")
     namespace: str = Field(..., description="The namespace the source's documents live in.")

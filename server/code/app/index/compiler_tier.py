@@ -170,20 +170,30 @@ UNSANDBOXED_NETWORK_SKIP = (
     "self-registered repository with a network remote, no clone, fetch or tier "
     "without the sandbox (nothing would vet the hosts it connects to)"
 )
+UNSANDBOXED_TIER_SKIP = (
+    "self-registered repository with a network remote, no compiler tier without the "
+    "sandbox (LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED covers its clone and fetch only)"
+)
 SANDBOX_REQUIRED_SKIP = (
     "LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox cannot run here: no clone, fetch or tier"
 )
 _unsandboxed_logged: set[tuple[str, str, str]] = set()
 
 
-def unsandboxed_skip(cfg: RepoConfig, worker: str, *, runs_repo_code: bool = False) -> str:
+def unsandboxed_skip(
+    cfg: RepoConfig, worker: str, *, runs_repo_code: bool = False, git_only: bool = False
+) -> str:
     """Why `worker` must not run this entry's repository jobs, '' when it may.
-    Only a host without the sandbox refuses, and only an entry a viewer added
-    from the Repositories page (`source == "registry"`): a job running its own
-    build, or any job of an entry whose remote is reached over the network,
-    since the plain-process fallback has no egress proxy. An operator's entry,
-    and a self-registered local mirror's non-build jobs, run either way, unless
-    LOOM_CODE_SANDBOX_REQUIRED says every entry waits for the sandbox.
+    Only a host without the sandbox refuses, and only an entry added through
+    `code.repo.add` or `code.repo.add_branch` (`source == "registry"`): a job
+    running its own build, or any job of an entry whose remote is reached over
+    the network, since the plain-process fallback has no egress proxy. An
+    operator's entry, and a self-registered local mirror's non-build jobs, run
+    either way, unless LOOM_CODE_SANDBOX_REQUIRED says every entry waits for the
+    sandbox. `git_only` marks a caller that only clones or fetches the entry:
+    with LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED those jobs reach a network remote
+    as plain processes. Every other caller keeps the skip, so no compiler tier of
+    that entry (dependency installs, module downloads, submodules) runs.
     Logged once per entry and worker."""
     required = settings.code_sandbox_required
     if (cfg.source != "registry" and not required) or sandbox_available():
@@ -192,10 +202,14 @@ def unsandboxed_skip(cfg: RepoConfig, worker: str, *, runs_repo_code: bool = Fal
         reason = SANDBOX_REQUIRED_SKIP
     elif runs_repo_code:
         reason = UNSANDBOXED_SKIP
-    elif not is_local_remote(cfg.git_remote):
-        reason = UNSANDBOXED_NETWORK_SKIP
-    else:
+    elif is_local_remote(cfg.git_remote):
         return ""
+    elif not settings.code_self_service_git_unsandboxed:
+        reason = UNSANDBOXED_NETWORK_SKIP
+    elif git_only:
+        return ""
+    else:
+        reason = UNSANDBOXED_TIER_SKIP
     key = (worker, cfg.org, cfg.namespace)
     if key not in _unsandboxed_logged:
         _unsandboxed_logged.add(key)

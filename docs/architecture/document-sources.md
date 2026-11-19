@@ -266,6 +266,11 @@ the redirect URI registered with the store is built from it, never from a reques
   dashboard's Connected accounts page for the kind, where the person signs in if they
   have not. PKCE where the store takes it; `include_granted_scopes=false`, so an earlier
   grant of the same client is not folded in.
+  After consent succeeds, a callback whose HTTP `Accept` header prefers HTML returns
+  a redirect to the fixed same-origin `/settings/connected-accounts` path. Other clients
+  receive `{"connected": true}` as JSON. Both responses disable caching, carry
+  `Referrer-Policy: no-referrer`, vary on `Accept`, and clear the browser binding cookie.
+  The dashboard URL carries no code, state, token or caller-supplied return address.
 - Scopes, the narrowest each store has:
   - `gdrive`: `https://www.googleapis.com/auth/drive.readonly`, `openid` and `email`
     (which the token answer spells `https://www.googleapis.com/auth/userinfo.email`).
@@ -291,14 +296,23 @@ the redirect URI registered with the store is built from it, never from a reques
   including for `notion`; a missing token refuses the connection instead of falling
   back to storing an access token. The refresh token is sealed under the purpose
   `connected_accounts.credential`, which `loom secrets reseal` covers. An access token
-  is held in memory only.
+  is held in memory only. The optional display email is sealed separately under
+  `connected_accounts.email`; neither value is copied into a source row.
 - Refresh for a source retains its account generation and source binding across provider
-  work. One refresh owns that generation at a time; replacement refresh material is
-  persisted only while both remain active and current. Disconnect, replacement, erasure or
-  deactivation cannot be undone by an older refresh. A cancellation or lost response
+  work. One reservation owns the account generation at a time. A successful rotation
+  is sealed only while the owner, account fence and reservation remain current; source
+  or requesting administrator loss then refuses delivery without discarding that rotation.
+  Disconnect, replacement, erasure or deactivation cannot be undone by an older refresh. A cancellation or lost response
   does not prove the provider left its token unchanged, so a retry needs the provider's
   documented recovery guarantee. Missing expiry metadata does not justify an invented
   lifetime or permanent access-token fallback.
+- Each native HTTP call receives an internal `CheckedAccess` checkout rather than an
+  ordinary credential string. It retains the owner, source id and connection generation,
+  rechecks standing after pacing and before dispatch, and rechecks after the bounded
+  response stream closes. Its deadline covers those waits and the body read. It cannot
+  be converted into a shared credential or serialized, and it forwards credentials only
+  to the provider's fixed native API paths, without redirects. A source changed during
+  the request discards the result.
 - Provider token contracts differ:
   - `gdrive` can omit a replacement refresh token. Retain the existing refresh token in
     that case. Revoking a token affects the person's grant across the OAuth project's
@@ -1122,7 +1136,49 @@ ClickHouse, additive migrations:
 | `loom.documents` (column)          | as today; in a mirror `source_uri` is `<address>#<source id>` | `access_json`: a mirrored document's permission list (`emails`, `owner`, `groups`, `domains`, `anyone`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
 | `loom.knowledge_source_listings`   | `(org, namespace, source_id)`                                 | `name`, `started_at` (the start of the source's last complete listing), `version`; `namespace` is the mirror                                                                                                      |
 | `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`                          | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                                     |
-| `loom.connected_accounts`          | `(org, subject, kind)`                                        | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                                 |
+| `loom.connected_accounts`          | `(org, subject, kind)`                                        | `connection_id`, `account_id`, `workspace_id`, `account_email_enc`, `scopes`, `credential_enc`, `active`, `refresh_id`, `connected_at`, `disconnected_at`, `version`                                              |
+
+This is an authentication control registry, keyed by canonical sign-in owner across
+namespaces, like the sign-in and revocation registries. It is not a memory-content row:
+`namespace`, `agent`, end-user `user_id` and `session_id` would falsely bind one provider
+connection to one requesting session or namespace. Source registrations retain their
+namespace and worker provenance; account changes use the authenticated actor in audit.
+The explicit owner erasure axis covers sealed identity and credential history rather
+than guessing a memory `user_id` from the sign-in subject. Auth invokes a required lifecycle
+port; the HTTP and CLI composition roots bind its knowledge implementation before
+accepting mutations. An unbound process refuses retirement rather than skipping it.
+
+The account registry seals its optional display email in `account_email_enc`. Its
+`workspace_id` distinguishes provider workspaces, `connection_id` fences replacement
+and disconnection, and `refresh_id` reserves one rotating refresh. Source rows retain
+that exact connection id with their canonical `owner_subject`; `created_by` remains
+audit attribution and supplies no credential authority. Indexed mirror discovery retains
+an exact source and account generation for each connected source. Preparing and refreshing
+a read plan revalidates the owner's standing without refreshing a provider token. The
+existing document permission list still decides which readers may see each copy; a
+verified reader need not own its source. A replacement source is not added to a retained
+plan. Worker publication checks owner and source standing again after extraction and
+embedding, before committing documents or a complete listing.
+
+The browser routes and account operations implement the connection backend. The dashboard
+connection page, interactive CLI flow and crawl support require their own integration;
+the backend does not implement those surfaces. Connect routes are excluded from HTTP
+tracing before request attributes or headers can be captured.
+
+Account restore cleanup discovers raw account and connected-source history, including
+replaced registrations and source-only orphan owners. It stops every proven random
+Keeper key under its exact owner lease, queues every historical source id, clears only
+matching current registrations, and physically deletes account and source history with
+raw residue verification. Ordinary disconnect still refuses another live generation.
+The cleanup runs before publication in `loom reconcile` for either restored store. For a
+ClickHouse-only deployment, stop every serving process, restore its configured stores,
+then run `python dev/restore_connected_accounts.py` and repeat with `--apply`. The script
+accepts only the configured deployment and preserves its authority and cell checks;
+it does not attach cleanup to the generic loader's arbitrary database or scratch target.
+Recent worker activity refuses cleanup. Local completion precedes bounded best-effort
+provider revocation outside leases, and revocation failure cannot restore credentials.
+Complete the separate mirror-content restore cleanup before serving; account cleanup
+alone does not prove every mirror document, chunk, head and original was erased.
 
 A source N-1 can operate on (`shared`, `access: namespace`, with items today's config
 can express) keeps today's columns as they are: `kind`, its credential in
@@ -1186,6 +1242,16 @@ statements and census keys against these, and its tests pin each one:
   no source row, list or members row names them, and a crawl reads them again only once
   an org admin readmits them. The pull request that builds connected accounts and crawls
   designs that erasure.
+- Private canonical-owner cleanup uses the exact `(org, subject, kind)` key independently
+  of namespace and end-user erasure. Disconnect and deactivation fence the generation,
+  clear the current credential, queue every owned source for retirement, then physically
+  delete historical provider identity and credentials. They retain only an empty inactive
+  canonical-owner marker. SCIM deletion removes that marker too. The canonical-owner
+  census counts all historical rows, including sealed values; a failed delete, missing
+  census answer or residue refuses completion. The `user_id` erasure scope continues to
+  mean an end-user principal and never guesses a sign-in subject from an id or email.
+  Source retirement remains queued until the existing mirror retirement worker finishes;
+  account cleanup alone does not certify that every source copy or crawl entry is erased.
 - `erasure.request` refuses an `acl-` scope for every caller but a platform admin with
   auth on, and `erasure.export` refuses one for every caller (an export would read the
   mirror's chunks with no permission check); with auth off both refuse it for everyone.
@@ -1314,7 +1380,7 @@ The redirect URI to register with each store is
 - `server/knowledge/app/sources.py`: the ops.
 - `server/knowledge/app/source_sync.py` and its kind modules: the sync.
 - `server/knowledge/app/source_access.py`: the permission check and the mirror legs.
-- `server/auth/connected_accounts.py`: the connect routes and their store.
+- `server/knowledge/app/connection_routes.py`: the browser consent routes.
 - `server/clients/gdrive.py`, `notion.py`, `linear.py`, `recording.py`: the stores.
 - `server/clients/connected_oauth.py` (`OAuthClient`): fixed-provider consent, code
   exchange, refresh, account metadata and revocation requests. Calls share the caller's

@@ -356,10 +356,13 @@ def run_connected[T](
     command writes), disconnected on every path — an open client at loop close leaks its
     HTTP session."""
     from server import boot
+    from server.auth.account_lifecycle import bind
     from server.core.background import register_buffer_drainer
     from server.core.ch import get_client
     from server.insights.app.provider_command import model_command
+    from server.knowledge.app.connected_accounts import stop_subjects
 
+    bind(stop_subjects)
     named = _declared(orgs, org_free)
     register_buffer_drainer("boot-writes", boot.drain_writes)
 

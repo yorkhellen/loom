@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from threading import Lock
 
 from loom.session_protection import (
     SessionProtection,
@@ -16,10 +17,13 @@ from loom.session_protection import (
 class _CallbackProtection:
     def __init__(self, bound: SessionProtection | None) -> None:
         self._roots = response_roots(bound)
+        self._lock = Lock()
 
     def remember(self, bound: SessionProtection | None) -> None:
         # A later callback or client rebinding cannot remove an earlier contributor.
-        self._roots = tuple(dict.fromkeys((*self._roots, *response_roots(bound))))
+        roots = response_roots(bound)
+        with self._lock:
+            self._roots = tuple(dict.fromkeys((*self._roots, *roots)))
 
     @contextmanager
     def automatic(self, bound: SessionProtection | None) -> Iterator[None]:

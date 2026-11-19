@@ -849,46 +849,6 @@ class SymbolsMixin(CodeRepoBase):
             out |= {str(r["path"]) for r in rows if r.get("path")}
         return out
 
-    async def methods_named(
-        self, org: str, ns: str, method: str, *, limit: int = 300
-    ) -> list[dict[str, Any]]:
-        """Every `*::method` definition, one row per qualified name, carrying
-        a human signature (tree-sitter's parameter list; scip stores a hash)
-        and the scip symbol_id when that tier has the symbol (scip edges bind
-        to it). Powers virtual-dispatch resolution for override seeds."""
-        rows = await self._ch.query_all(
-            """
-            SELECT qualified_name,
-                   argMaxIf(symbol_id, version, tier = 'scip') AS scip_id,
-                   argMaxIf(symbol_id, version, tier = 'treesitter') AS ts_id,
-                   argMaxIf(signature, version, tier = 'treesitter') AS signature,
-                   any(path) AS path
-            FROM loom.code_symbols FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND name = {name:String} AND kind IN ('function', 'method')
-              AND tombstoned_at IS NULL AND position(qualified_name, '::') > 0
-            GROUP BY qualified_name
-            LIMIT {limit:UInt32}
-            """,
-            {"org": org, "ns": ns, "name": method, "limit": limit},
-        )
-        out: list[dict[str, Any]] = []
-        for r in rows:
-            sid = str(r.get("scip_id") or "") or str(r.get("ts_id") or "")
-            if not sid:
-                continue
-            out.append(
-                {
-                    "symbol_id": sid,
-                    "qualified_name": str(r["qualified_name"]),
-                    "signature": str(r.get("signature") or ""),
-                    "path": str(r.get("path") or ""),
-                    "kind": "function",
-                    "tier": "scip" if r.get("scip_id") else "treesitter",
-                }
-            )
-        return out
-
     async def symbols_by_signatures(
         self,
         org: str,

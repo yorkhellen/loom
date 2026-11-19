@@ -3523,6 +3523,7 @@ async def test_a_no_migration_boot_only_checks_the_record(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_refused_by_an_erasure_answers_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3575,6 +3576,7 @@ async def test_a_restore_refused_by_an_erasure_answers_not_found(
     ],
 )
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_checks_the_key_only_when_its_outcome_is_unknown(
     monkeypatch: pytest.MonkeyPatch, error: Exception, checked: bool
 ) -> None:
@@ -3620,6 +3622,7 @@ async def test_a_restore_checks_the_key_only_when_its_outcome_is_unknown(
     ("memory_type", "sensitivity", "owed"),
     [("semantic", "", True), ("episodic", "", False), ("semantic", "high", False)],
 )
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_committed_restore_whose_document_failed_owes_it_only_when_embedded(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -3755,6 +3758,7 @@ async def test_on_clickhouse_the_status_before_a_retirement_is_read_by_the_rows_
     assert (params["id"], params["version"]) == ("mid", 9)
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_logged(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -3794,6 +3798,7 @@ async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_l
     assert "search document failed for k" in caplog.text
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_that_lost_its_answer_still_announces_and_mirrors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3835,6 +3840,7 @@ async def test_a_clickhouse_restore_that_lost_its_answer_still_announces_and_mir
         (False, None, [False]),  # unknown: fenced on the context's own settled read
     ],
 )
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_postgres_restore_of_a_high_key_is_fenced_once_its_commit_may_have_landed(
     monkeypatch: pytest.MonkeyPatch, committed: bool, reread: bool | None, fenced: list[bool]
 ) -> None:
@@ -4137,6 +4143,7 @@ async def test_a_gap_is_measured_by_the_embedders_own_model(
     assert asked == ["model-now"]
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_leaves_out_the_memories_whose_erasure_evidence_is_kept(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4176,18 +4183,26 @@ def test_a_non_finite_or_out_of_range_float32_is_refused(confidence: float) -> N
         pg_memory.encode_row({"confidence": confidence})
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_commits_in_batches_and_leaves_a_pending_rest_to_the_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A large restore commits batch by batch, each within a commit's lease. Once one's
     publication is pending, the rest are only committed, without waiting on ClickHouse
     again, and the restore completes: the delivery worker publishes them."""
-    from server.memory.app import snapshot_rows
+    from server.memory.app import blacklist_guard, snapshot_rows
     from server.settings import settings
 
     calls: list[tuple[int, bool]] = []
+    checked_policy = {("", "*"): 1, ("o", "*"): 4}
 
-    async def _insert(rows: Any, *, ch: Any, publish_now: bool = True) -> int:
+    async def checked(rows: Any) -> dict[tuple[str, str], int]:
+        return checked_policy
+
+    monkeypatch.setattr(blacklist_guard, "enforce_rows", checked)
+
+    async def _insert(rows: Any, *, ch: Any, publish_now: bool = True, policy: Any) -> int:
+        assert policy == checked_policy, "every batch keeps the policy checked for the payload"
         calls.append((len(rows), publish_now))
         if len(calls) == 2:
             raise pg_lease.PublicationPending()
@@ -4200,6 +4215,7 @@ async def test_a_restore_commits_in_batches_and_leaves_a_pending_rest_to_the_wor
     assert calls == [(2, True), (2, True), (2, False), (1, False)]
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_an_erasure_between_batches_refuses_the_batch_it_meets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6628,6 +6644,7 @@ async def test_a_clickhouse_restore_never_settles_that_it_did_not_land(
     assert await restore._restore_landed(None, _row("k", version=7)) is landed
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_whose_reread_misses_answers_outcome_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6658,6 +6675,7 @@ async def test_a_clickhouse_restore_whose_reread_misses_answers_outcome_unknown(
     assert raised.value.extra["outcome_unknown"] is True
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_cancelled_while_it_reads_a_lost_commit_back_is_fenced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

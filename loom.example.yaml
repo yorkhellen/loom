@@ -1066,6 +1066,11 @@ settings:
   # the only source. [restart]
   # code_self_service_enabled: true
 
+  # True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to
+  # platform admins: a token scoped to namespaces, or a trusted caller acting for
+  # another subject, is refused too. False: each op's own role decides. [restart]
+  # code_self_service_platform_admin_only: false
+
   # Where the code ingest worker clones a self-service entry's bare mirror (one per
   # GitHub repository, shared by its branches). [restart]
   # code_repos_root: "var/code_repos/self"
@@ -1162,6 +1167,14 @@ settings:
   # False: without the sandbox, jobs fall back to plain processes as "Without the
   # sandbox" in code-index-operations.md says. [restart]
   # code_sandbox_required: false
+
+  # True lets a host without the sandbox add and fetch a self-service entry with a
+  # network remote: its git jobs (ls-remote, clone, fetch) run as plain processes and it
+  # gets no compiler tier. Refused at load without
+  # code_self_service_platform_admin_only, where a request can carry no principal (auth
+  # off, or mcp_auth_mode open), and with code_sandbox_required. False: such an entry
+  # needs the sandbox. [restart]
+  # code_self_service_git_unsandboxed: false
 
   # Largest file one process of a sandboxed repository job may write, in MiB (a pack or
   # index.scip). [restart]
@@ -2833,6 +2846,69 @@ settings:
 
   # --- document sources ---
 
+  # OAuth client id for personal Drive connections; empty disables the provider.
+  # [restart]
+  # connect_gdrive_client_id: ""
+
+  # Public-integration client id for personal page-store connections; empty disables it.
+  # [restart]
+  # connect_notion_client_id: ""
+
+  # OAuth client id for personal project-tracker connections; empty disables it.
+  # [restart]
+  # connect_linear_client_id: ""
+
+  # The operator has restricted the public integration to read-content capability. Its
+  # token response cannot prove this registration setting; false disables it. [restart]
+  # connect_notion_read_content_only: false
+
+  # Seconds for the whole optional live-search leg, including final membership checks.
+  # At most five; provider credential deadlines may shorten it further. [restart]
+  # knowledge_live_search_timeout_s: 5.0
+
+  # Connected registrations searched per live-search request, from one to three.
+  # [restart]
+  # knowledge_live_search_max_sources: 3
+
+  # Live hits across all registrations, and the per-provider page bound, from one to
+  # ten. [restart]
+  # knowledge_live_search_max_hits: 10
+
+  # Bytes read from one live-search provider response, at most 256 KiB. The
+  # document-source download limit may shorten this bound further. [restart]
+  # knowledge_live_search_response_max_bytes: 262144
+
+  # Registered Drive items searched per source, from one to four; no pagination.
+  # [restart]
+  # knowledge_live_search_max_items: 4
+
+  # Native parent lookups per Notion membership check, from zero to three. Zero accepts
+  # directly registered pages and database membership without parent fetches. [restart]
+  # knowledge_live_search_max_ancestors: 3
+
+  # Seconds for local connection stops, including their source retirement writes.
+  # [restart]
+  # knowledge_connected_stop_timeout_s: 20.0
+
+  # Seconds for best-effort provider revocation after every local stop has committed.
+  # [restart]
+  # knowledge_connected_revoke_timeout_s: 5.0
+
+  # Seconds the renewed account-generation lease lives. Source leases follow it;
+  # provider requests hold neither. [restart]
+  # knowledge_connected_lease_ttl_s: 60.0
+
+  # Seconds a connection change waits for another holder's account-generation lease.
+  # [restart]
+  # knowledge_connected_lease_wait_s: 5.0
+
+  # Maximum complete owner scan; exceeding it refuses instead of stopping a subset.
+  # [restart]
+  # knowledge_connected_registry_scan_limit: 4096
+
+  # Registrations per page during root-secret resealing. [restart]
+  # knowledge_connected_registry_page_size: 256
+
   # Seconds one connected-account OAuth request may take, including its response. The
   # caller's remaining deadline can shorten this bound. [restart]
   # knowledge_connected_oauth_timeout_s: 30.0
@@ -2844,6 +2920,12 @@ settings:
   # Active document sources (knowledge.source.add) one namespace may register; an add
   # past it is refused with SOURCE_QUOTA. [live]
   # knowledge_sources_max_per_namespace: 8
+
+  # Active connected sources per namespace, separate from the shared/crawl quota. [live]
+  # knowledge_connected_sources_max_per_namespace: 64
+
+  # Active connected sources one canonical person may register in one namespace. [live]
+  # knowledge_connected_sources_max_per_person: 8
 
   # Seconds a document source's probe (add, update, check, rotate) or tracker short-id
   # lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and
@@ -2863,6 +2945,10 @@ settings:
   # Mirrored reads require a complete listing and group observation within this many
   # seconds; missing or older evidence admits nobody. [restart]
   # knowledge_source_acl_stale_seconds: 3600
+
+  # Maximum team and member rows read for one project's complete permission list. A
+  # larger list refuses publication rather than granting from a partial page. [restart]
+  # knowledge_source_acl_max_entries: 10000
 
   # Enable optional source push setup, callbacks and Drive renewal; false keeps polling
   # only. [restart]
@@ -2987,8 +3073,8 @@ settings:
   # that resolves to it. Not a server-wide read-only switch: a request naming another
   # toolset gets it, and the token is the boundary. "all"       — the stable ops plus
   # the experimental ops the core or atomic roster lists; the other experimental ops
-  # stay callable by name, and _MCP_HIDDEN_OPS are never listed. An unknown value is
-  # "core". [restart]
+  # stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops
+  # under mcp_code_upload_tools aside. An unknown value is "core". [restart]
   # mcp_toolset: "core"
 
   # tools/list schema profile: "standard" (curated prose + inputSchema), "full" (+
@@ -3019,6 +3105,11 @@ settings:
   # List code.* tools on the MCP surface (core toolset union). Off = code ops are
   # HTTP/SDK-only. [restart]
   # mcp_code_tools: false
+
+  # Serve the compiler-tier upload ops (code.scip_ingest, code.scip_status) over MCP,
+  # which hides both when off. On, an upload is accepted, on every transport, only for a
+  # namespace that has a repository entry. [restart]
+  # mcp_code_upload_tools: false
 
   # ===== The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers =====
 
@@ -4787,8 +4878,8 @@ settings:
   # otel_environment: "dev"
 
   # Comma-separated path regexes the FastAPI instrumentation opens no span for (health
-  # polls). "" = instrument every path but the sign-in routes (/oauth/), which are
-  # always left out: their URLs carry codes. [restart]
+  # polls). "" = instrument every path but the sign-in routes (/oauth/ and
+  # /v1/connect/), which are always left out: their URLs carry codes. [restart]
   # otel_excluded_urls: "/v1/health"
 
   # Scales every op's p99 budget (OP_BUDGETS_P99_MS in server/settings/catalog.py, tuned

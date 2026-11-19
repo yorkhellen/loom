@@ -83,10 +83,17 @@ describe("Agent", () => {
     expectTypeOf(toolDefinitions("anthropic")).toEqualTypeOf<AnthropicToolDefinition[]>();
     expectTypeOf(toolDefinitions("openai")).toEqualTypeOf<OpenAIToolDefinition[]>();
     expectTypeOf(toolDefinitions()).toEqualTypeOf<
-      ToolSpec<"loom_remember" | "loom_recall" | "loom_ask" | "loom_offload" | "loom_fetch" | "loom_note">[]
+      ToolSpec<
+        "loom_remember" | "loom_recall" | "loom_ask" | "loom_offload" | "loom_fetch" | "loom_note" | "loom_code_lookup"
+      >[]
     >();
     expectTypeOf(agent.tools().definitions("openai")).toEqualTypeOf<OpenAIToolDefinition[]>();
-    // @ts-expect-error not one of the six tools
+    expectTypeOf(
+      agent
+        .tools({}, { codeNamespace: "code-repo", only: ["loom_code_lookup"] })
+        .execute("loom_code_lookup", { kind: "symbol", target: "pkg.fn" }),
+    ).resolves.toEqualTypeOf<string>();
+    // @ts-expect-error not a declared tool
     agent.tools({}, { only: ["loom_forget"] });
   });
 });

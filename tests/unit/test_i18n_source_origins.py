@@ -181,8 +181,10 @@ def test_source_proof_never_turns_an_incomplete_original_into_a_completed_counte
 
 
 @pytest.mark.parametrize("fault", [False, True], ids=["source-change", "source-change-with-fault"])
-def test_source_origins_keep_changed_completed_whole_page_as_one_request(fault):
-    current = RAW.replace("Original first.", "Added 界.\nOriginal first.")
+@pytest.mark.parametrize("replacement", [False, True], ids=["insertion", "interior-replacement"])
+def test_source_origins_keep_changed_completed_whole_page_as_one_request(fault, replacement):
+    change = "Replacement 界." if replacement else "Added 界.\nOriginal first."
+    current = RAW.replace("Original first.", change)
     case = _case(current, whole=True)
     _, now, units, _ = case
     plan = _plan(
@@ -202,12 +204,12 @@ def test_source_origins_keep_changed_completed_whole_page_as_one_request(fault):
 
 
 @pytest.mark.parametrize(
-    "invalid", ["absent", "forged", "replacement", "ambiguous", "boundary", "language"]
+    "invalid", ["absent", "forged", "endpoint", "ambiguous", "boundary", "language"]
 )
 def test_completed_whole_page_requires_valid_source_origins(invalid):
     current = RAW.replace("Original first.", "Added first.\nOriginal first.")
-    if invalid == "replacement":
-        current = RAW.replace("Original first.", "Replacement.")
+    if invalid == "endpoint":
+        current = RAW.replace("# Sample\n", "# Replacement\n", 1)
     elif invalid == "ambiguous":
         current = current.replace("Intro.", "# Sample\n\nIntro.")
     elif invalid == "boundary":
@@ -294,3 +296,90 @@ def test_literal_code_links_remain_part_of_the_exact_source_not_routing_options(
     plan = _plan((old, replace(now, english=forged, sha256=_digest(forged)), units, origins))
     assert plan.conflicts
     assert not plan.units
+
+
+def _interior_replacement_case(*, adjacent=False):
+    historical = RAW.replace("Original first.", "Original first.\nRetained first tail.").replace(
+        "Original second.", "Original second.\nRetained second tail."
+    )
+    current = historical.replace("Original first.", "Replacement first.")
+    if adjacent:
+        current = current.replace("Original second.", "Replacement second.")
+    return _case(current, historical=historical)
+
+
+@pytest.mark.parametrize("adjacent", [False, True])
+def test_retained_endpoints_prove_interior_replacements_without_new_cuts(adjacent):
+    case = _interior_replacement_case(adjacent=adjacent)
+    plan = _plan(case, faults=(UnitFault("1", "semantic"),))
+    assert not plan.conflicts
+    assert [u.disposition for u in plan.units] == [
+        "reuse",
+        "changed",
+        "changed" if adjacent else "reuse",
+        "reuse",
+    ]
+    assert tuple(u.original for u in plan.units) == case[2]
+    assert plan.units[1].fault_ids == ("semantic",)
+    assert (
+        "".join(
+            u.separator_before + case[1].english[u.scope.start : u.scope.end] for u in plan.units
+        )
+        + plan.trailing_separator
+        == case[1].english
+    )
+
+
+@pytest.mark.parametrize("problem", ["missing-endpoint", "reordered-retained-lines"])
+def test_replacements_keep_endpoint_loss_and_reordering_refusals(problem):
+    historical = RAW.replace("Original first.", "Original first.\nRetained first tail.")
+    if problem == "missing-endpoint":
+        current = historical.replace("Retained first tail.", "Replacement tail.")
+    else:
+        current = historical.replace(
+            "Original first.\nRetained first tail.", "Retained first tail.\nOriginal first."
+        )
+    plan = _plan(_case(current, historical=historical))
+    assert plan.conflicts
+    assert not plan.units
+
+
+def test_completed_history_uses_the_same_interior_replacement_proof():
+    from scripts.i18n import completed_history as h
+
+    old, now, units, origins = _interior_replacement_case(adjacent=True)
+    ranges = tuple(h.RequestRange(u.start, u.end, u.source_sha256) for u in units)
+    ident = h.partition_manifest_sha256(old, ranges)
+    partitions = (h.RequestPartition(old, ranges, ident),)
+    completions = tuple(h.CompletionOrigin(ident, i, str(i)) for i in range(len(units)))
+    eligible = {str(i): True for i in range(len(units))}
+    selected = tuple(str(i) for i in range(len(units)))
+    plan = h.reconcile_completed_history(
+        now,
+        partitions,
+        completions,
+        selected,
+        history_manifest_sha256=h.completion_history_sha256(partitions, completions, eligible),
+        eligible_reuse=eligible,
+        source_origins={ident: origins},
+    )
+    assert not plan.conflicts
+    assert [u.disposition for u in plan.units] == ["reuse", "changed", "changed", "reuse"]
+    assert tuple(u.original.reply_ref for u in plan.units) == selected
+    assert len(plan.partitions) == 1
+    assert len(plan.completions) == len(units)
+
+
+@pytest.mark.parametrize("fits", [False, True])
+def test_interior_replacement_keeps_the_exact_utf8_request_bound(fits):
+    old, now, units, origins = _interior_replacement_case()
+    raw = origins.current_raw.replace("Replacement first.", "Replacement 界界.")
+    case = _case(raw, historical=origins.historical_raw)
+    size = len(chunks.heading_sections(case[1].english)[1].encode())
+    plan = _plan(case, bounded_new_request_bytes=size - int(not fits))
+    assert bool(plan.conflicts) is not fits
+    if fits:
+        assert plan.units[1].original == units[1]
+        assert plan.units[1].disposition == "changed"
+    else:
+        assert not plan.units

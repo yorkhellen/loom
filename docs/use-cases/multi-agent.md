@@ -47,6 +47,37 @@ on different people's machines, use an [authenticated team deployment](../gettin
 with each person's own token granting access to the same namespace. A local single-user
 run does not test those access controls.
 
+## Memory for a software factory
+
+When autonomous coding agents take an issue through implementation and review, Loom keeps
+shared context, source-linked lessons and reported outcomes between those stages. Your
+agents and orchestrator execute the work and enforce review and CI requirements.
+
+Use an indexed repository and separate agent credentials with access to the shared
+namespace. Check [shared recall and denied access](../getting-started/evaluate.md#shared-memory-across-clients)
+before relying on the deployment for team work.
+
+1. **Recover the task.** Load relevant context with `context.pack`, keeping the issue,
+   acceptance criteria and current revision with the task. With a registered tracker,
+   [check prior reports and candidate changes](../features/tracker/overview.md#from-a-bug-draft-to-candidate-prs).
+   An unavailable or degraded duplicate check leaves that question unresolved.
+2. **Inspect the source.** Read the current definitions, callers and affected code before
+   changing it. Follow the [code intelligence walkthrough](code-intelligence.md); use local
+   tools for uncommitted changes the index has not seen.
+3. **Keep the reason.** Save a durable lesson or decision with its evidence and the
+   qualified definitions it concerns. Follow the [repository tag and namespace rules](memory-linked-to-code.md#start)
+   so the code-link worker can resolve it. Keep the current plan in working memory.
+4. **Hand off the evidence.** Pass the issue, revision, lesson keys, completed checks and
+   open questions to the next agent. The [planner and worker example](https://github.com/ClickHouse/loom/tree/main/sdk/python/examples#multi_agent_handoffpy)
+   shows fenced task ownership, separate credentials and result provenance.
+5. **Review against current code.** Inspect the diff and the lesson's link state. A
+   `changed` link calls for checking the claim; it does not establish that the claim is
+   false. Follow [check a lesson after a code edit](memory-linked-to-code.md#check-a-lesson-after-a-code-edit).
+   Treat the agent's reported completion separately from review and CI results.
+6. **Record the outcome.** Correct an outdated claim at the same memory key. Record which
+   memories each run relied on and close the run once, following the [run and procedure reporting rules](autonomous-agents.md#check-one-agent-task).
+   Keep failed checks and unresolved questions with the handoff.
+
 ## Start
 
 [Integrate Loom into an agent](../guides/agent-integration.md) covers the identity each

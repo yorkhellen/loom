@@ -456,11 +456,12 @@ async def mirror_job(name: str, run: Any, cfg: Any, wait_s: float) -> bool:
 
 def network_refusal(cfg: Any) -> str:
     """Why this host must not clone or fetch `cfg` for a read, '' when it may: the
-    worker's rule (`compiler_tier.unsandboxed_skip`), so a viewer-added remote is
-    never reached by a plain process without the egress proxy."""
+    ingest pass's rule (`compiler_tier.unsandboxed_skip` for a `git_only` caller), so
+    a self-registered remote is reached by a plain process without the egress proxy
+    only where LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED says so."""
     from server.code.app.index.compiler_tier import unsandboxed_skip
 
-    return unsandboxed_skip(cfg, "history_read")
+    return unsandboxed_skip(cfg, "history_read", git_only=True)
 
 
 async def mirror_ready(

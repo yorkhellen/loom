@@ -373,8 +373,13 @@ Loom runs them under bubblewrap, which needs unprivileged user namespaces. The d
 pod security does not allow them, so by default (`sandbox.required: false`) the compiler
 tiers of the repositories the operator lists in `LOOM_CODE_REPOS_JSON` run as plain
 processes in the pod, and a repository added from the dashboard is refused. List only
-repositories you trust. With `sandbox.required: true` a pod is not ready until the sandbox
-works, so set it only once the nodes are prepared:
+repositories you trust. `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` and
+`LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` in `env` let platform admins add repositories
+with `code.repo.add` in such pods: their clone and fetches run as plain processes too,
+and they get no compiler tier
+([without the sandbox](./code-index-operations.md#repository-job-sandbox)). With
+`sandbox.required: true` a pod is not ready until the sandbox works, so set it only once
+the nodes are prepared:
 
 1. Run Loom on nodes whose OS allows unprivileged user namespaces.
 2. Install `dev/seccomp/loom-repo-sandbox.json` under the kubelet's seccomp directory

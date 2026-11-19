@@ -461,6 +461,8 @@ ROUTES: dict[str, str] = {
     "/v1/auth/agent-signup POST": "named",
     "/v1/auth/login POST": "password sign-in: the account is this cell's",
     "/v1/auth/self-signup POST": "named",
+    "/v1/connect/{kind}/start POST": "token",
+    "/v1/connect/{kind}/callback GET": "named",
     "/v1/health GET": "health probe",
     "/v1/health/live GET": "health probe",
     "/v1/health/ready GET": "health probe",

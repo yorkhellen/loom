@@ -88,6 +88,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Guides
 
 - [Integrate Loom into an agent](docs/guides/agent-integration.md): This guide covers what an agent sends to Loom and how it reads the answers: the client surface, the identity, what to write, and how to read.
+- [Code tools for model integrations](docs/guides/code-tools.md): An indexed code namespace and a token with read access let an SDK tool loop investigate definitions, behavior and relationships with `loom_code_lookup`.
 - [Debug a request](docs/guides/debugging.md): Loom tags everything one request does with the same id, so tracing a request is a join.
 - [Customize the extraction pipeline](docs/guides/extraction-pipeline.md): `memory.set_from_messages` runs its transcript through an ordered list of steps that share one state.
 - [Headless bots](docs/guides/headless-bots.md): A headless bot runs with no person to paste a token, notice a silent failure or say "remember this".
@@ -158,6 +159,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Google ADK memory service](docs/architecture/google-adk-adapter.md): The Google ADK adapter implements the framework's memory service through Loom's Python and TypeScript SDKs.
 - [Haystack document store and retriever](docs/architecture/haystack-adapter.md): The optional Haystack 3.5 adapter implements its document-store protocol and a native retrieval component through the synchronous Loom SDK.
 - [Knowledge gaps](docs/architecture/knowledge-gaps.md): Loom records the searches that found nothing a caller could use and groups them, once a day, into knowledge gaps: the questions several people asked that the namespace's memory and documents do not answer.
+- [Live connected-source search](docs/architecture/live-source-search.md): `search.query(live=true)` adds an ephemeral section from the asker's own connected Drive and Notion registrations.
 - [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
 - [n8n adapter](docs/architecture/n8n-adapter.md): The n8n community package stores conversation history and durable facts in a Loom deployment through the TypeScript SDK.
@@ -180,6 +182,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Benchmark methodology](docs/benchmarks/methodology.md): This page covers what the harnesses compute, how a delta is judged against noise, when two numbers compare, and where the numbers are biased.
 - [Benchmark results](docs/benchmarks/results.md): This page lists only numbers that a committed file reproduces.
 - [Running the benchmarks](docs/benchmarks/running.md): Run every command from the repository root with the checkout's interpreter and the root first on `PYTHONPATH`:
+- [SDK issue resolution](docs/benchmarks/sdk-issue-resolution.md): The SDK issue harness measures proposed patches with and without Loom code lookup.
 - [Skill eval](docs/benchmarks/skill-eval.md): The skill eval grades the `loom-memory` skill by the namespace an agent leaves behind.
 
 ## Optional

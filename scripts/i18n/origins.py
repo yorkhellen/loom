@@ -56,22 +56,31 @@ def _prepared_positions(raw: str, prepared, language: str) -> tuple[int | None, 
     return tuple(_project(p, insertions) if p is not None else None for p in positions)
 
 
-def _line_embeddings(old: list[str], new: list[str]) -> tuple[list[int], list[int]]:
-    first, last = [], []
+def _line_embeddings(old: list[str], new: list[str]) -> tuple[list[int | None], list[int | None]]:
+    # Missing lines may change only inside endpoints proved by retained neighbours.
+    available = set(new)
+    first: list[int | None] = []
+    last: list[int | None] = []
     at = 0
     for line in old:
+        if line not in available:
+            first.append(None)
+            continue
         while at < len(new) and new[at] != line:
             at += 1
         if at == len(new):
-            raise ValueError("raw source changes are not insertion-only")
+            raise ValueError("retained raw source lines are not in historical order")
         first.append(at)
         at += 1
     at = len(new) - 1
     for line in reversed(old):
+        if line not in available:
+            last.append(None)
+            continue
         while at >= 0 and new[at] != line:
             at -= 1
         if at < 0:
-            raise ValueError("raw source changes are not insertion-only")
+            raise ValueError("retained raw source lines are not in historical order")
         last.append(at)
         at -= 1
     return first, list(reversed(last))
@@ -92,16 +101,20 @@ def _raw_projection(old: str, new: str, points: set[int]) -> dict[int, int]:
         neighbours = (
             [i for i in (index - 1, index) if 0 <= i < len(before)] if boundary else [index]
         )
-        if not neighbours or any(first[i] != last[i] for i in neighbours):
-            raise ValueError("raw source endpoint has ambiguous insertion origins")
+        if not neighbours or any(first[i] is None or first[i] != last[i] for i in neighbours):
+            raise ValueError("raw source endpoint has missing or ambiguous retained origins")
         if boundary:
-            left = targets[first[index - 1] + 1] if index else 0
-            right = targets[first[index]] if index < len(before) else len(new)
+            previous = first[index - 1] if index else None
+            following = first[index] if index < len(before) else None
+            left = targets[previous + 1] if previous is not None else 0
+            right = targets[following] if following is not None else len(new)
             if left != right:
                 raise ValueError("raw insertion lies at an original unit or separator boundary")
             projected[point] = left
         else:
-            projected[point] = targets[first[index]] + point - starts[index]
+            origin = first[index]
+            assert origin is not None
+            projected[point] = targets[origin] + point - starts[index]
     return projected
 
 
